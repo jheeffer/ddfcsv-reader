@@ -1,0 +1,34 @@
+<script type="text/javascript" src="libs/papaparse/papaparse.min.js"></script>
+<script type="text/javascript" src="ddfcsv.js"></script>
+<script type="text/javascript">
+
+	let ddfcsv = Object.create(ddfcsvReader);
+	ddfcsv.loadDataset("data/ddf--pcbs--census-master/datapackage.json")
+		.then(performQuery)
+		.then(console.log);
+
+	function performQuery() {
+		const query = {
+			select: {
+				key: ["geo"],
+				value: ["name","region","is--country"]
+			},
+			from: "entities"
+		};
+
+		document.addEventListener('readystatechange', ready);
+		function ready() {
+			if (document.readyState != 'loading') {
+				document.getElementById("query").innerHTML = JSON.stringify(query, null, 2);
+			}
+		}
+		ready();
+		console.log(query);
+		return ddfcsv.performQuery(query)
+	}
+
+</script>
+<body>
+<pre id="query">
+</pre>
+</body>
