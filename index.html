@@ -8,13 +8,33 @@
 		.then(console.log);
 
 	function performQuery() {
-		const query = {
+	
+		const queries = [{
 			select: {
 				key: ["geo"],
-				value: ["name","region","is--country"]
+				value: ["name","region","is--region","is--country"]
 			},
-			from: "entities"
-		};
+			from: "entities",
+			where: {
+				$or: [
+				{region: "1" },
+				{region: "2" }
+				]
+			}
+		},{
+			select: {
+				key: ["governorate", "year"],
+				value: ["buildings"]
+			},
+			from: "datapoints",
+			where: {
+				"governorate": { $in: ["1101","1105","1110","1120","1125"] },
+				$or: [
+					{"buildings": { $lte: 32833 }},
+					{"buildings": { $gte: 50000 }}
+				]
+			}
+		}];
 
 		document.addEventListener('readystatechange', ready);
 		function ready() {
@@ -23,8 +43,8 @@
 			}
 		}
 		ready();
-		console.log(query);
-		return ddfcsv.performQuery(query)
+		console.log(JSON.stringify(queries,null,2));
+		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv)));
 	}
 
 </script>

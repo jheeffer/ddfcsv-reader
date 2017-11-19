@@ -63,6 +63,7 @@ let ddfcsvReader = {
 					this.fillMissingValues(result, select);
 					entitySetValues.valuesPromise.then(entitySetValues => {
 						result = this.applyFilter(result, entitySetValues);
+						result = this.applyFilter(result, where);
 						resolve(result);
 					});
 				})
@@ -78,33 +79,57 @@ let ddfcsvReader = {
 		});
 	},
 
-	applyFilter(data, filter) {
-		for (let concept in filter) {
-			if (Array.isArray(filter[concept])) filter[concept] = new Set(filter[concept]);
+	getOperator(op) {
+		const ops = {
+			/* logical operatotrs */
+			$and: (row, predicates) => predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a && b),
+			$or:  (row, predicates) => predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a || b),
+			$not: (row, predicates) => !this.applyFilterRow(row, predicate),
+			$nor: (row, predicates) => !predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a || b),
+
+			/* equality operators */
+			$eq:  (rowValue, filterValue) => rowValue == filterValue,
+			$ne:  (rowValue, filterValue) => rowValue != filterValue,
+			$gt:  (rowValue, filterValue) => rowValue > filterValue,
+			$gte: (rowValue, filterValue) => rowValue >= filterValue,
+			$lt:  (rowValue, filterValue) => rowValue < filterValue,
+			$lte: (rowValue, filterValue) => rowValue <= filterValue,
+			$in:  (rowValue, filterValue) => filterValue.includes(rowValue),
+			$nin: (rowValue, filterValue) => !filterValue.includes(rowValue)
 		}
-		return data.filter(row => {
-			for (let field in row) {
-				if (filter[field]) {
-					if (filter[field].has) {
-						return filter[field].has(row[field]);
-					}
-				}
+		return ops[op] || null;
+	},
+
+	applyFilter(data, filter = {}) {
+		return data.filter((row) => this.applyFilterRow(row, filter));
+	},
+
+	applyFilterRow(row, filter) {
+		return Object.keys(filter).reduce((result, filterKey) => {
+			if (operator = this.getOperator(filterKey)) {
+				return result && operator(row, filter[filterKey]);
+			} else if(typeof filter[filterKey] == "string") { // { <field>: <value> } is shorthand for { <field>: { $eq: <value> }} 
+				return result && this.getOperator("$eq")(row[filterKey], filter[filterKey])
+			} else {
+				return result && this.applyFilterRow(row[filterKey], filter[filterKey]);
 			}
-			return true;
-		});
+		}, true);
 	},
 
 	getEntitySetValues(conceptStrings) {
 		const concepts = conceptStrings
 			.filter(conceptString => conceptString != "concept" && ["entity_set", "entity_domain"].includes(this.conceptsLookup.get(conceptString).concept_type))
 			.map(conceptString => this.conceptsLookup.get(conceptString));
+		
 		const promises = concepts.map(concept => {
 				if (concept.concept_type == "entity_set")
 					return this.performQuery({ select: { key: [concept.domain], value: ["is--" + concept.concept] } })
 						.then(result => {
-							return { [concept.concept]: result
-								.filter(row => row["is--" + concept.concept])
-								.map(row => row[concept.domain])
+							return { [concept.concept]: 
+								{ "$in": result
+									.filter(row => row["is--" + concept.concept])
+									.map(row => row[concept.domain])
+								}
 							};
 						});
 				else // concept_type == "entity_domain"
@@ -125,7 +150,7 @@ let ddfcsvReader = {
 								lookupConcept.domain == concept.concept // entity sets of the domain
 					})
 					.reduce((map, aliasConcept) => map.set(aliasConcept.concept, concept.concept), new Map())
-				).reduce((renameMap, singleMap) => new Map([...renameMap,...singleMap]), new Map()),
+				).reduce((mergeA, mergeB) => new Map([...mergeA,...mergeB]), new Map()),
 			valuesPromise: Promise.all(promises).then(results => {
 				return results.reduce((a,b) => Object.assign(a,b),{});
 			})
