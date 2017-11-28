@@ -11,16 +11,28 @@
 	
 		const queries = [{
 			select: {
+				key: ["key", "value"],
+				value: []
+			},
+			from: "*.schema"
+		},{
+			select: {
 				key: ["geo"],
 				value: ["name","region","is--region","is--country"]
 			},
 			from: "entities",
 			where: {
 				$or: [
-				{region: "1" },
-				{region: "2" }
+					{region: "1" },
+					{region: "2" }
 				]
 			}
+		},{
+			select: {
+				key: ["region"],
+				value: ["name","is--region","is--country"]
+			},
+			from: "entities"
 		},{
 			select: {
 				key: ["governorate", "year"],
@@ -34,17 +46,60 @@
 					{"buildings": { $gte: 50000 }}
 				]
 			}
+		},{
+			select: {
+				key: ["governorate", "year"],
+				value: ["buildings"]
+			},
+			from: "datapoints",
+			where: {
+				governorate: "$gov"
+			},
+			join: {
+				$gov: {
+					key: "governorate",
+					where: {
+						"$or": [
+							{"region": "1"},
+							{"region": { "$eq": "2" } }
+						]
+					}
+				}
+			}
+		},{
+			select: {
+				key: ["governorate", "year"],
+				value: ["buildings"]
+			},
+			from: "datapoints",
+			where: {
+				governorate: "$gov",
+				year: { $lt: "2017" }
+			},
+			join: {
+				$gov: {
+					key: "governorate",
+					where: {
+						"$or": [
+							{"region": "1"},
+						]
+					}
+				}
+			}
 		}];
 
 		document.addEventListener('readystatechange', ready);
 		function ready() {
 			if (document.readyState != 'loading') {
-				document.getElementById("query").innerHTML = JSON.stringify(query, null, 2);
+				document.getElementById("query").innerHTML = JSON.stringify(queries, null, 2);
 			}
 		}
 		ready();
 		console.log(JSON.stringify(queries,null,2));
-		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv)));
+		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv))).then(result => { 
+			document.getElementById("query").innerHTML += JSON.stringify(result, null, 2);
+			return result;
+		});
 	}
 
 </script>
