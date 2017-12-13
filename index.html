@@ -1,22 +1,25 @@
 <script type="text/javascript" src="libs/papaparse/papaparse.min.js"></script>
 <script type="text/javascript" src="ddfcsv.js"></script>
 <script type="text/javascript">
-
 	let ddfcsv = Object.create(ddfcsvReader);
 
-/*
-./test/fixtures/systema_globalis
-./test/fixtures/systema_globalis_tiny
-./test/fixtures/population_wpp
-./test/fixtures/sg_dp_mix_entity
-*/
+	const testTemplate = (ds, query, index) => new Promise((resolve) => {
+		console.time(ds + index);
+		ddfcsv.loadDataset(`${ds}/datapackage.json`)
+			.then(() => {
+				ddfcsv.performQuery(query).then(result => {
+					console.timeEnd(ds + index);
+					console.log(query, result.length);
+					resolve(result);
+				});
+			});
+	});
 
-	ddfcsv.loadDataset("data/systema_globalis/datapackage.json")
-		.then(performQuery)
-		.then(console.log);
-
-		const queries = [
-			/*{!
+	const cases = [
+		// bad
+		/*{
+			ds: 'data/systema_globalis',
+			query: {
 				select: {
 					key: ['concept'],
 					value: [
@@ -29,8 +32,11 @@
 						{ concept_type: { $eq: 'entity_set' } }
 					]
 				}
-			}*/
-			/*{ok
+			}
+		},*/
+		{
+			ds: 'data/systema_globalis',
+			query: {
 				from: 'datapoints',
 				animatable: 'time',
 				select: {
@@ -43,8 +49,12 @@
 				},
 				grouping: {},
 				orderBy: 'time'
-			}*/
-			/*{!
+			}
+		}
+		// bad
+		/*,{
+			ds: 'data/systema_globalis',
+			query: {
 				select: {
 					key: ['geo', 'time'],
 					value: [
@@ -79,22 +89,30 @@
 						where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
 					}
 				}
-			}*/
-			/*{!
-				from: 'datapoints',
-				animatable: 'time',
-				select: {
-					key: ['geo', 'time'],
-					value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
-				},
-				where: { $and: [{ geo: '$geo' }, { time: '$time' }] },
-				join: {
-					$geo: { key: 'geo', where: { 'is--country': true } },
-					$time: { key: 'time', where: { time: '2015' } }
-				},
-				order_by: 'time'
-			}*/
-			/*{ok
+			}
+		}*/
+		// bad
+		/*, {
+			ds: 'data/systema_globalis',
+			query:
+				{
+					from: 'datapoints',
+					animatable: 'time',
+					select: {
+						key: ['geo', 'time'],
+						value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+					},
+					where: { $and: [{ geo: '$geo' }, { time: '$time' }] },
+					join: {
+						$geo: { key: 'geo', where: { 'is--country': true } },
+						$time: { key: 'time', where: { time: '2015' } }
+					},
+					order_by: 'time'
+				}
+		}*/
+		, {
+			ds: 'data/systema_globalis',
+			query: {
 				from: 'datapoints',
 				animatable: 'time',
 				select: {
@@ -109,8 +127,12 @@
 					}
 				},
 				order_by: 'time'
-			}*/
-			/*{!
+			}
+		}
+		// bad
+		/*, {
+			ds: 'data/systema_globalis_tiny',
+			query: {
 				language: 'en',
 				from: 'datapoints',
 				animatable: 'time',
@@ -126,8 +148,12 @@
 					$time: { key: 'time', where: { time: { $gte: '1800', $lte: '2015' } } }
 				},
 				order_by: ['time']
-			}*/
-			{
+			}
+		}*/
+		// bad
+		/*, {
+			ds: 'data/population_wpp',
+			query: {
 				language: 'en',
 				from: 'datapoints',
 				animatable: 'year',
@@ -143,24 +169,54 @@
 				},
 				order_by: ['year']
 			}
-		];
-
-		/*document.addEventListener('readystatechange', ready);
-		function ready() {
-			if (document.readyState != 'loading') {
-				document.getElementById("query").innerHTML = JSON.stringify(queries, null, 2);
+		}*/
+		// bad
+		/*, {
+			ds: 'data/systema_globalis_tiny',
+			query: {
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['population_total']
+				},
+				where: {
+					$and: [{ geo: '$geo' }]
+				},
+				join: {
+					$geo: { key: 'geo', where: { world_4region: { $in: ['americas', 'asia'] } } }
+				},
+				order_by: ['time']
 			}
-		}
-		ready();*/
-		console.time('query');
-		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv))).then(result => {
-			// document.getElementById("query").innerHTML += JSON.stringify(result, null, 2);
-			console.log(result.length);
-			console.timeEnd('query');
+		}*/
+		// bad
+		/*, {
+			ds: 'data/presentation_set',
+			query: {
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['income_per_person_gdppercapita_ppp_inflation_adjusted', 'life_expectancy_years', 'population_total']
+				},
+				where: {
+					$and: [{ geo: '$geo' }, { time: '$time' }]
+				},
+				join: {
+					$geo: { key: 'geo', where: { 'un_state': true } },
+					$time: { key: 'time', where: { time: { $gte: '1800', $lte: '2015' } } }
+				},
+				order_by: ['time']
+			}
+		}*/
+	];
 
-			return result;
-		});
-	}
+	Promise.all(cases.map((testCase, i) => testTemplate(testCase.ds, testCase.query, i))).then(result => {
+		console.log('the end...');
+	});
+
 
 </script>
 
