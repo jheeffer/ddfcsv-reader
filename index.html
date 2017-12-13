@@ -36,6 +36,107 @@
 		{
 			ds: 'data/systema_globalis',
 			query: {
+				from: 'entities',
+				animatable: 'time',
+				select: {
+					key: ['geo'],
+					value: ['name', 'world_4region', 'latitude', 'longitude']
+				},
+				where: { 'is--country': true },
+				grouping: {},
+				orderBy: null
+			}
+		},
+		// bad - should be 4 records selected, but current records quantity is 296
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'entities',
+				animatable: false,
+				select: { key: ['geo'], value: ['name', 'shape_lores_svg'] },
+				where: { 'is--world_4region': true },
+				grouping: {},
+				orderBy: null
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'entities',
+				animatable: false,
+				select: { key: ['tag'], value: ['name', 'parent'] },
+				where: {},
+				grouping: {},
+				orderBy: null
+			}
+		},
+		{
+			ds: 'data/systema_globalis_tiny',
+			query: {
+				language: 'en',
+				from: 'entities',
+				animatable: false,
+				select: { key: ['world_4region'], value: ['name', 'rank', 'shape_lores_svg'] },
+				where: {},
+				join: {},
+				order_by: ['rank']
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				language: "en",
+				from: "entities",
+				animatable: false,
+				select: {
+					key: [
+						'world_4region'
+					],
+					value: [
+						'name',
+						'rank',
+						'shape_lores_svg'
+					]
+				},
+				where: {},
+				join: {},
+				order_by: [
+					'rank'
+				]
+			}
+		},
+		// bad - should be 195 records selected, but current records quantity is 296
+		{
+			ds: 'data/presentation_set',
+			query: {
+				language: 'en',
+				from: 'entities',
+				animatable: 'time',
+				select: {
+					key: [
+						'geo'
+					],
+					value: [
+						'name',
+						'world_4region'
+					]
+				},
+				where: {
+					$and: [
+						{
+							'un_state': true
+						}
+					]
+				},
+				join: {},
+				order_by: [
+					'rank'
+				]
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
 				from: 'datapoints',
 				animatable: 'time',
 				select: {
@@ -145,7 +246,7 @@
 				order_by: ['time']
 			}
 		},
-		// bad, should be 28902 records
+		// bad - should be 28902 records selected, but current records quantity is 0
 		{
 			ds: 'data/population_wpp',
 			query: {
