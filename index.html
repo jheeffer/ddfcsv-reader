@@ -3,107 +3,168 @@
 <script type="text/javascript">
 
 	let ddfcsv = Object.create(ddfcsvReader);
-	ddfcsv.loadDataset("data/ddf--pcbs--census-master/datapackage.json")
+
+/*
+./test/fixtures/systema_globalis
+./test/fixtures/systema_globalis_tiny
+./test/fixtures/population_wpp
+./test/fixtures/sg_dp_mix_entity
+*/
+
+	ddfcsv.loadDataset("data/systema_globalis/datapackage.json")
 		.then(performQuery)
 		.then(console.log);
 
-	function performQuery() {
-	
-		const queries = [{
-			select: {
-				key: ["key", "value"],
-				value: []
-			},
-			from: "*.schema"
-		},{
-			select: {
-				key: ["geo"],
-				value: ["name","region","is--region","is--country"]
-			},
-			from: "entities",
-			where: {
-				$or: [
-					{region: "1" },
-					{region: "2" }
-				]
-			}
-		},{
-			select: {
-				key: ["region"],
-				value: ["name","is--region","is--country"]
-			},
-			from: "entities"
-		},{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				"governorate": { $in: ["1101","1105","1110","1120","1125"] },
-				$or: [
-					{"buildings": { $lte: 32833 }},
-					{"buildings": { $gte: 50000 }}
-				]
-			}
-		},{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				governorate: "$gov"
-			},
-			join: {
-				$gov: {
-					key: "governorate",
-					where: {
-						"$or": [
-							{"region": "1"},
-							{"region": { "$eq": "2" } }
-						]
+		const queries = [
+			/*{!
+				select: {
+					key: ['concept'],
+					value: [
+						'concept_type', 'name', 'color'
+					]
+				},
+				from: 'concepts',
+				where: {
+					$and: [
+						{ concept_type: { $eq: 'entity_set' } }
+					]
+				}
+			}*/
+			/*{ok
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+				},
+				where: {
+					'is--country': true,
+					time: { $gt: 1800, $lt: 2016 }
+				},
+				grouping: {},
+				orderBy: 'time'
+			}*/
+			/*{!
+				select: {
+					key: ['geo', 'time'],
+					value: [
+						'life_expectancy_years', 'population_total'
+					]
+				},
+				from: 'datapoints',
+				where: {
+					$and: [
+						{ geo: '$geo' },
+						{ time: '$time' },
+						{
+							$or: [
+								{ population_total: { $gt: 10000 } },
+								{ life_expectancy_years: { $gt: 30, $lt: 70 } }
+							]
+						}
+					]
+				},
+				join: {
+					$geo: {
+						key: 'geo',
+						where: {
+							$and: [
+								{ 'is--country': true },
+								{ latitude: { $lte: 0 } }
+							]
+						}
+					},
+					$time: {
+						key: 'time',
+						where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
 					}
 				}
-			}
-		},{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				governorate: "$gov",
-				year: { $lt: "2017" }
-			},
-			join: {
-				$gov: {
-					key: "governorate",
-					where: {
-						"$or": [
-							{"region": "1"},
-						]
+			}*/
+			/*{!
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+				},
+				where: { $and: [{ geo: '$geo' }, { time: '$time' }] },
+				join: {
+					$geo: { key: 'geo', where: { 'is--country': true } },
+					$time: { key: 'time', where: { time: '2015' } }
+				},
+				order_by: 'time'
+			}*/
+			/*{ok
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+				},
+				where: { $and: [{ geo: '$geo' }] },
+				join: {
+					$geo: {
+						key: 'geo',
+						where: { 'is--country': true }
 					}
-				}
+				},
+				order_by: 'time'
+			}*/
+			/*{!
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['sg_population', 'sg_gdp_p_cap_const_ppp2011_dollar', 'sg_gini']
+				},
+				where: {
+					$and: [{ geo: '$geo' }, { time: '$time' }]
+				},
+				join: {
+					$geo: { key: 'geo', where: { 'is--country': true, geo: { $in: ['ago'] } } },
+					$time: { key: 'time', where: { time: { $gte: '1800', $lte: '2015' } } }
+				},
+				order_by: ['time']
+			}*/
+			{
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'year',
+				select: {
+					key: ['country_code', 'year', 'gender', 'age'],
+					value: ['population']
+				},
+				where: {
+					$and: [{ country_code: '$country_code' }]
+				},
+				join: {
+					$country_code: { key: 'country_code', where: { country_code: { $in: ['900'] } } }
+				},
+				order_by: ['year']
 			}
-		}];
+		];
 
-		document.addEventListener('readystatechange', ready);
+		/*document.addEventListener('readystatechange', ready);
 		function ready() {
 			if (document.readyState != 'loading') {
 				document.getElementById("query").innerHTML = JSON.stringify(queries, null, 2);
 			}
 		}
-		ready();
-		console.log(JSON.stringify(queries,null,2));
-		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv))).then(result => { 
-			document.getElementById("query").innerHTML += JSON.stringify(result, null, 2);
+		ready();*/
+		console.time('query');
+		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv))).then(result => {
+			// document.getElementById("query").innerHTML += JSON.stringify(result, null, 2);
+			console.log(result.length);
+			console.timeEnd('query');
+
 			return result;
 		});
 	}
 
 </script>
+
 <body>
-<pre id="query">
+	<pre id="query">
 </pre>
 </body>
