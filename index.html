@@ -1,22 +1,21 @@
 <script type="text/javascript" src="libs/papaparse/papaparse.min.js"></script>
 <script type="text/javascript" src="ddfcsv.js"></script>
 <script type="text/javascript">
-	let ddfcsv = Object.create(ddfcsvReader);
+	const testTemplate = (ds, query) => new Promise((resolve) => {
+		const ddfcsv = Object.create(ddfcsvReader);
 
-	const testTemplate = (ds, query, index) => new Promise((resolve) => {
-		console.time(ds + index);
 		ddfcsv.loadDataset(`${ds}/datapackage.json`)
 			.then(() => {
 				ddfcsv.performQuery(query).then(result => {
-					console.timeEnd(ds + index);
 					console.log(query, result.length);
+
 					resolve(result);
 				});
 			});
 	});
 
 	const cases = [
-		// bad
+		// bad - error
 		/*{
 			ds: 'data/systema_globalis',
 			query: {
@@ -50,9 +49,8 @@
 				grouping: {},
 				orderBy: 'time'
 			}
-		}
-		// bad
-		/*,{
+		},
+		{
 			ds: 'data/systema_globalis',
 			query: {
 				select: {
@@ -65,7 +63,8 @@
 				where: {
 					$and: [
 						{ geo: '$geo' },
-						{ time: '$time' },
+						// { time: '$time' },
+						{ time: { $gt: '1990', $lte: '2015' } },
 						{
 							$or: [
 								{ population_total: { $gt: 10000 } },
@@ -83,16 +82,15 @@
 								{ latitude: { $lte: 0 } }
 							]
 						}
-					},
-					$time: {
-						key: 'time',
-						where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
-					}
+					} //,
+					// $time: {
+					//	key: 'time',
+					//	where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
+					// }
 				}
 			}
-		}*/
-		// bad
-		/*, {
+		},
+		{
 			ds: 'data/systema_globalis',
 			query:
 				{
@@ -102,15 +100,14 @@
 						key: ['geo', 'time'],
 						value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
 					},
-					where: { $and: [{ geo: '$geo' }, { time: '$time' }] },
+					where: { $and: [{ geo: '$geo' }, { time: '2015' }] },
 					join: {
-						$geo: { key: 'geo', where: { 'is--country': true } },
-						$time: { key: 'time', where: { time: '2015' } }
+						$geo: { key: 'geo', where: { 'is--country': true } }
 					},
 					order_by: 'time'
 				}
-		}*/
-		, {
+		},
+		{
 			ds: 'data/systema_globalis',
 			query: {
 				from: 'datapoints',
@@ -128,9 +125,8 @@
 				},
 				order_by: 'time'
 			}
-		}
-		// bad
-		/*, {
+		},
+		{
 			ds: 'data/systema_globalis_tiny',
 			query: {
 				language: 'en',
@@ -141,17 +137,16 @@
 					value: ['sg_population', 'sg_gdp_p_cap_const_ppp2011_dollar', 'sg_gini']
 				},
 				where: {
-					$and: [{ geo: '$geo' }, { time: '$time' }]
+					$and: [{ geo: '$geo' }, { time: { $gte: '1800', $lte: '2015' } }]
 				},
 				join: {
-					$geo: { key: 'geo', where: { 'is--country': true, geo: { $in: ['ago'] } } },
-					$time: { key: 'time', where: { time: { $gte: '1800', $lte: '2015' } } }
+					$geo: { key: 'geo', where: { 'is--country': true, geo: { $in: ['ago'] } } }
 				},
 				order_by: ['time']
 			}
-		}*/
-		// bad
-		/*, {
+		},
+		// bad, should be 28902 records
+		{
 			ds: 'data/population_wpp',
 			query: {
 				language: 'en',
@@ -169,9 +164,8 @@
 				},
 				order_by: ['year']
 			}
-		}*/
-		// bad
-		/*, {
+		},
+		{
 			ds: 'data/systema_globalis_tiny',
 			query: {
 				language: 'en',
@@ -189,9 +183,8 @@
 				},
 				order_by: ['time']
 			}
-		}*/
-		// bad
-		/*, {
+		},
+		{
 			ds: 'data/presentation_set',
 			query: {
 				language: 'en',
@@ -202,18 +195,17 @@
 					value: ['income_per_person_gdppercapita_ppp_inflation_adjusted', 'life_expectancy_years', 'population_total']
 				},
 				where: {
-					$and: [{ geo: '$geo' }, { time: '$time' }]
+					$and: [{ geo: '$geo' }, { time: { $gte: '1800', $lte: '2015' } }]
 				},
 				join: {
-					$geo: { key: 'geo', where: { 'un_state': true } },
-					$time: { key: 'time', where: { time: { $gte: '1800', $lte: '2015' } } }
+					$geo: { key: 'geo', where: { 'un_state': true } }
 				},
 				order_by: ['time']
 			}
-		}*/
+		}
 	];
 
-	Promise.all(cases.map((testCase, i) => testTemplate(testCase.ds, testCase.query, i))).then(result => {
+	Promise.all(cases.map(testCase => testTemplate(testCase.ds, testCase.query))).then(result => {
 		console.log('the end...');
 	});
 
