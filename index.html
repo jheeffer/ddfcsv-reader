@@ -1,119 +1,318 @@
 <script type="text/javascript" src="libs/papaparse/papaparse.min.js"></script>
 <script type="text/javascript" src="ddfcsv.js"></script>
 <script type="text/javascript">
+	const testTemplate = (ds, query) => new Promise((resolve) => {
+		const ddfcsv = Object.create(ddfcsvReader);
 
-	let ddfcsv = Object.create(ddfcsvReader);
-	ddfcsv.loadDataset("data/ddf--pcbs--census-master/datapackage.json")
-		.then(performQuery)
-		.then(console.log);
+		ddfcsv.loadDataset(`${ds}/datapackage.json`)
+			.then(() => {
+				ddfcsv.performQuery(query).then(result => {
+					console.log(query, result.length);
+					resolve(result);
+				});
+			});
+	});
 
-	function performQuery() {
-	
-		const queries = [{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				year: { $lt: "2017" },
-				connection_to_electricity: { $lt: 26399 }
-			}
-		},{
-			select: {
-				key: ["key", "value"],
-				value: []
-			},
-			from: "*.schema"
-		},{
-			select: {
-				key: ["geo"],
-				value: ["name","region","is--region","is--country"]
-			},
-			from: "entities",
-			where: {
-				$or: [
-					{region: "1" },
-					{region: "2" }
-				]
-			}
-		},{
-			select: {
-				key: ["region"],
-				value: ["name","is--region","is--country"]
-			},
-			from: "entities"
-		},{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				"governorate": { $in: ["1101","1105","1110","1120","1125"] },
-				$or: [
-					{"buildings": { $lte: 32833 }},
-					{"buildings": { $gte: 50000 }}
-				]
-			}
-		},{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				governorate: "$gov"
-			},
-			join: {
-				$gov: {
-					key: "governorate",
-					where: {
-						"$or": [
-							{"region": "1"},
-							{"region": { "$eq": "2" } }
-						]
-					}
+	const cases = [
+		// bad - error
+		/*{
+			ds: 'data/systema_globalis',
+			query: {
+				select: {
+					key: ['concept'],
+					value: [
+						'concept_type', 'name', 'color'
+					]
+				},
+				from: 'concepts',
+				where: {
+					$and: [
+						{ concept_type: { $eq: 'entity_set' } }
+					]
 				}
 			}
-		},{
-			select: {
-				key: ["governorate", "year"],
-				value: ["buildings"]
-			},
-			from: "datapoints",
-			where: {
-				governorate: "$gov",
-				year: { $lt: "2017" }
-			},
-			join: {
-				$gov: {
-					key: "governorate",
-					where: {
-						"$or": [
-							{"region": "1"},
-						]
-					}
+		},*/
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'entities',
+				animatable: 'time',
+				select: {
+					key: ['geo'],
+					value: ['name', 'world_4region', 'latitude', 'longitude']
+				},
+				where: { 'is--country': true },
+				grouping: {},
+				orderBy: null
+			}
+		},
+		// bad - should be 4 records selected, but current records quantity is 296
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'entities',
+				animatable: false,
+				select: { key: ['geo'], value: ['name', 'shape_lores_svg'] },
+				where: { 'is--world_4region': true },
+				grouping: {},
+				orderBy: null
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'entities',
+				animatable: false,
+				select: { key: ['tag'], value: ['name', 'parent'] },
+				where: {},
+				grouping: {},
+				orderBy: null
+			}
+		},
+		{
+			ds: 'data/systema_globalis_tiny',
+			query: {
+				language: 'en',
+				from: 'entities',
+				animatable: false,
+				select: { key: ['world_4region'], value: ['name', 'rank', 'shape_lores_svg'] },
+				where: {},
+				join: {},
+				order_by: ['rank']
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				language: "en",
+				from: "entities",
+				animatable: false,
+				select: {
+					key: [
+						'world_4region'
+					],
+					value: [
+						'name',
+						'rank',
+						'shape_lores_svg'
+					]
+				},
+				where: {},
+				join: {},
+				order_by: [
+					'rank'
+				]
+			}
+		},
+		// bad - should be 195 records selected, but current records quantity is 296
+		{
+			ds: 'data/presentation_set',
+			query: {
+				language: 'en',
+				from: 'entities',
+				animatable: 'time',
+				select: {
+					key: [
+						'geo'
+					],
+					value: [
+						'name',
+						'world_4region'
+					]
+				},
+				where: {
+					$and: [
+						{
+							'un_state': true
+						}
+					]
+				},
+				join: {},
+				order_by: [
+					'rank'
+				]
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+				},
+				where: {
+					'is--country': true,
+					time: { $gt: 1800, $lt: 2016 }
+				},
+				grouping: {},
+				orderBy: 'time'
+			}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				select: {
+					key: ['geo', 'time'],
+					value: [
+						'life_expectancy_years', 'population_total'
+					]
+				},
+				from: 'datapoints',
+				where: {
+					$and: [
+						{ geo: '$geo' },
+						// { time: '$time' },
+						{ time: { $gt: '1990', $lte: '2015' } },
+						{
+							$or: [
+								{ population_total: { $gt: 10000 } },
+								{ life_expectancy_years: { $gt: 30, $lt: 70 } }
+							]
+						}
+					]
+				},
+				join: {
+					$geo: {
+						key: 'geo',
+						where: {
+							$and: [
+								{ 'is--country': true },
+								{ latitude: { $lte: 0 } }
+							]
+						}
+					} //,
+					// $time: {
+					//	key: 'time',
+					//	where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
+					// }
 				}
 			}
-		}];
-
-		document.addEventListener('readystatechange', ready);
-		function ready() {
-			if (document.readyState != 'loading') {
-				document.getElementById("query").innerHTML = JSON.stringify(queries, null, 2);
+		},
+		{
+			ds: 'data/systema_globalis',
+			query:
+				{
+					from: 'datapoints',
+					animatable: 'time',
+					select: {
+						key: ['geo', 'time'],
+						value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+					},
+					where: { $and: [{ geo: '$geo' }, { time: '2015' }] },
+					join: {
+						$geo: { key: 'geo', where: { 'is--country': true } }
+					},
+					order_by: 'time'
+				}
+		},
+		{
+			ds: 'data/systema_globalis',
+			query: {
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['life_expectancy_years', 'income_per_person_gdppercapita_ppp_inflation_adjusted', 'population_total']
+				},
+				where: { $and: [{ geo: '$geo' }] },
+				join: {
+					$geo: {
+						key: 'geo',
+						where: { 'is--country': true }
+					}
+				},
+				order_by: 'time'
+			}
+		},
+		{
+			ds: 'data/systema_globalis_tiny',
+			query: {
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['sg_population', 'sg_gdp_p_cap_const_ppp2011_dollar', 'sg_gini']
+				},
+				where: {
+					$and: [{ geo: '$geo' }, { time: { $gte: '1800', $lte: '2015' } }]
+				},
+				join: {
+					$geo: { key: 'geo', where: { 'is--country': true, geo: { $in: ['ago'] } } }
+				},
+				order_by: ['time']
+			}
+		},
+		// bad - should be 28902 records selected, but current records quantity is 0
+		{
+			ds: 'data/population_wpp',
+			query: {
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'year',
+				select: {
+					key: ['country_code', 'year', 'gender', 'age'],
+					value: ['population']
+				},
+				where: {
+					$and: [{ country_code: '$country_code' }]
+				},
+				join: {
+					$country_code: { key: 'country_code', where: { country_code: { $in: ['900'] } } }
+				},
+				order_by: ['year']
+			}
+		},
+		{
+			ds: 'data/systema_globalis_tiny',
+			query: {
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['population_total']
+				},
+				where: {
+					$and: [{ geo: '$geo' }]
+				},
+				join: {
+					$geo: { key: 'geo', where: { world_4region: { $in: ['americas', 'asia'] } } }
+				},
+				order_by: ['time']
+			}
+		},
+		{
+			ds: 'data/presentation_set',
+			query: {
+				language: 'en',
+				from: 'datapoints',
+				animatable: 'time',
+				select: {
+					key: ['geo', 'time'],
+					value: ['income_per_person_gdppercapita_ppp_inflation_adjusted', 'life_expectancy_years', 'population_total']
+				},
+				where: {
+					$and: [{ geo: '$geo' }, { time: { $gte: '1800', $lte: '2015' } }]
+				},
+				join: {
+					$geo: { key: 'geo', where: { 'un_state': true } }
+				},
+				order_by: ['time']
 			}
 		}
-		ready();
-		console.log(JSON.stringify(queries,null,2));
-		return Promise.all(queries.map(ddfcsv.performQuery.bind(ddfcsv))).then(result => { 
-			document.getElementById("query").innerHTML += JSON.stringify(result, null, 2);
-			return result;
-		});
-	}
+	];
+
+	Promise.all(cases.map(testCase => testTemplate(testCase.ds, testCase.query))).then(result => {
+		console.log('the end...');
+	});
+
 
 </script>
+
 <body>
-<pre id="query">
+	<pre id="query">
 </pre>
 </body>

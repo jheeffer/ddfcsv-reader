@@ -1,5 +1,5 @@
 let ddfcsvReader = {
-	
+
 	keyValueLookup: null,
 	resourcesLookup: null,
 	datapackage: null,
@@ -205,6 +205,7 @@ let ddfcsvReader = {
 	 * @return {Array}                  Array of concept strings only of given types
 	 */
 	filterConceptsByType(conceptStrings = [...this.conceptLookup.keys()], concept_types) {
+    // ...this.conceptsLookup.keys() ???
 		return conceptStrings
 			.filter(conceptString => this.conceptsLookup && concept_types.includes(this.conceptsLookup.get(conceptString).concept_type))
 			.map(conceptString => this.conceptsLookup.get(conceptString));
@@ -219,14 +220,14 @@ let ddfcsvReader = {
 		const resourceKeySet = new Set(resourceKey);
 		return this.filterConceptsByType(queryKey, ["entity_set", "entity_domain"])
 			.map(concept => this.concepts
-				.filter(lookupConcept => {  
+				.filter(lookupConcept => {
 					if (concept.concept_type == "entity_set")
 						return resourceKeySet.has(lookupConcept.concept) && 
 							lookupConcept.concept != concept.concept && // not the actual concept
 							(
 								lookupConcept.domain == concept.domain ||  // other entity sets in entity domain
 								lookupConcept.concept == concept.domain    // entity domain of the entity set
-							) 
+							)
 					else // concept_type == "entity_domain"
 						return resourceKeySet.has(lookupConcept.concept) && 
 							lookupConcept.concept != concept.concept && // not the actual concept
@@ -244,14 +245,14 @@ let ddfcsvReader = {
 	getEntityFilter(conceptStrings) {
 		const promises = this.filterConceptsByType(conceptStrings, ["entity_set"])
 			.map(concept => this.performQuery({ select: { key: [concept.domain], value: ["is--" + concept.concept] } })
-				.then(result => ({ [concept.concept]: 
+				.then(result => ({ [concept.concept]:
 						{ "$in": result
 							.filter(row => row["is--" + concept.concept])
 							.map(row => row[concept.domain])
 						}
 				}))
-			);    
-		
+			);
+
 		return Promise.all(promises).then(results => {
 			return results.reduce((a,b) => Object.assign(a,b),{});
 		})
@@ -373,10 +374,10 @@ let ddfcsvReader = {
 					const concept = _this.conceptsLookup.get(headerName) || {};
 					return ["boolean", "measure"].includes(concept.concept_type);
 				},
-				complete: result => { 
-					resource.response = result; 
+				complete: result => {
+					resource.response = result;
 					resource.data = result.data;
-					result.resource = resource; 
+					result.resource = resource;
 					resolve(result);
 				},
 				error: error => reject(error)

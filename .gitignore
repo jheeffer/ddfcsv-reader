@@ -1,1 +1,6 @@
-data/
+!data/
+data/*
+!data/systema_globalis
+!data/systema_globalis_tiny
+!data/population_wpp
+!data/sg_dp_mix_entity
