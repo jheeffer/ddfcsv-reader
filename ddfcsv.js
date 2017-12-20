@@ -1,39 +1,45 @@
 let ddfcsvReader = {
 	
-	path: null,
 	keyValueLookup: null,
 	resourcesLookup: null,
 	datapackage: null,
 
 	loadDataset(path) {
+		this.datapackagePath = this.getDatapackagePath(path);
+		this.basePath = this.getBasePath(this.datapackagePath);
+		return this.readDataPackage(this.datapackagePath);
+	},
+
+	getDatapackagePath(path) {	
 		if (!path.endsWith("datapackage.json")) {
 			if (!path.endsWith("/")) {
 				path = path + "/";
 			}
 			path = path + "datapackage.json";
 		}
-		this.datapackagePath = path;
-		this.basePath = this.getBasePath(path);
-		return this.readDataPackage(path);
+		return path;
 	},
 
-	getBasePath(datapackagePath = this.path) {
-		datapackagePath = datapackagePath.split("/");
-		datapackagePath.pop();
-		return datapackagePath.join("/") + "/";
+	getBasePath(datapackagePath) {
+		dpPathSplit = datapackagePath.split("/");
+		dpPathSplit.pop();
+		return dpPathSplit.join("/") + "/";
 	},
 
 	readDataPackage(path) {
-		const dataPackagePromise = fetch(path)
-			.then(r => r.json())
+		return fetch(path)
+			.then(response => response.json())
 			.then(this.handleNewDatapackage.bind(this));
-		return dataPackagePromise;
 	},
 
-	handleNewDatapackage(dp) {
-		this.datapackage = dp;
+	handleNewDatapackage(dpJson) {
+		this.datapackage = dpJson;
 		this.buildResourcesLookup();
 		this.buildKeyValueLookup();
+		return this.buildConceptsLookup().then(() => dpJson);
+	},
+
+	buildConceptsLookup() {
 		return this.performQuery({ select: { key: ["concept"], value: ["concept_type", "domain"] }, from: "concepts" }).then(result => {
 			result = result
 				.filter(concept => concept.concept_type == "entity_set")
@@ -41,79 +47,105 @@ let ddfcsvReader = {
 				.concat(result);
 			this.concepts = result;
 			this.conceptsLookup = this.buildDataLookup(this.concepts, "concept");
-			return dp;
 		});
 	},
 
+	// can only take single-dimensional data 
 	buildDataLookup(data, key) {
 		return new Map(data.map(row => [row[key], row]));
 	},
 
 	performQuery(query) {
 		const { select, from="", where = {}, join = {}, order } = query;
-		// schema queries can be answered synchronously (if datapackage is loaded)
+
+		// schema queries can be answered synchronously (after datapackage is loaded)
 		if (from.split(".")[1] == "schema") 
 			return Promise.resolve(this.getSchemaResponse(query))
 
-		// load join lists
-		const joinsPromise = this.getJoinLists(join, query);
-
-		// rest async
+		// other queries are async
 		return new Promise((resolve, reject) => {
-			const resources = this.getResources(select.key, select.value);
-			Promise.all([...resources].map(this.loadResource.bind(this)))
-				.then(responses => {
-					let result = responses.reduce((result, resourceResponse) => {
-						const projected = this.applyProjectionAndRenameHeader(resourceResponse, select);
-						return this.joinData(select.key, result, projected);
-					}, []);
-					this.fillMissingValues(result, select);
-					this.getEntityFilter(select.key).then(entityFilter => {
-						joinsPromise.then(joinLists => {
-							const filter = this.mergeFilters(entityFilter, where);
-							result = this.applyFilter(result, filter, joinLists);
-							resolve(result);
-						});
-					});
-				})        
+
+			const projection = select.key.concat(select.value);
+			const filterFields = this.getFilterFields(where).filter(field => !projection.includes(field));
+			select.value = select.value.concat(filterFields); // add fields found only in filter to select.value so they are fetched and can be used for filtering
+
+			const resourcesPromise    = this.loadResources(select.key, select.value); // load all relevant resources
+			const joinsPromise        = this.getJoinLists(join, query);               // list of values selected from a join clause, effectively used to filter
+			const entityFilterPromise = this.getEntityFilter(select.key);             // filter which ensures result only includes queried entity sets
+
+			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
+				.then(([resources, entityFilter, joinLists]) => {
+
+					this.resolveJoinsInWhere(where, joinLists);            // replace $join placeholders with { $in: [...] } operators
+					const filter = this.mergeFilters(entityFilter, where);
+
+					const response = resources
+						.map(resourceResponse => this.applyProjectionAndRenameHeader(resourceResponse, select))
+						.reduce((joinedData, projected) => this.joinData(select.key, joinedData, projected), []) // join resources to one response
+						.map(row => this.fillMissingValues(row, projection)) // fill any missing values with null values
+						.filter(row => this.applyFilterRow(row, filter)) // apply filters (entity sets and where (including join))
+						.map(row => { filterFields.forEach(field => delete row[field]); return row; }); // remove fields found only in filter. 
+						// Cleaner: Do projection after filter and don't include these fields in projection.
+
+					resolve(response);
+
+				});       
 		});
 	},
 
+	/**
+	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator. Impure method: `where` parameter is edited.
+	 * @param  {Object} where     Where clause possibly containing $join placeholders as field values. 
+	 * @param  {Object} joinLists Collection of lists of entity or time values, coming from other tables defined in query `join` clause.
+	 * @return {undefined}        Changes where parameter in-place. Does not return.
+	 */
+	resolveJoinsInWhere(where, joinLists) {
+		for (field in where) {
+			// no support for deeper object structures (mongo style) { foo: { bar: "3", baz: true }}
+			if (["$and","$or","$nor"].includes(field))
+				where[field].forEach(subFilter => this.resolveJoinsInWhere(subFilter, joinLists));
+			else if (field == "$not")
+				this.resolveJoinsInWhere(where[field], joinLists);
+			else if (joinLists[where[field]])
+				where[field] = { "$in": joinLists[where[field]] };
+		};
+	},
+
 	mergeFilters(...filters) {
-		return filters.reduce((a,b) => { a["$and"].push(b); return a }, { "$and": [] });
+		return filters.reduce((a,b) => { 
+			a["$and"].push(b); 
+			return a 
+		}, { "$and": [] });
 	},
 
 	getSchemaResponse(query) {
 		const collection = query.from.split('.')[0];
-		const datapackageToSchemaResponse = kvPair => ({ key: kvPair.primaryKey, value: kvPair.value });
+		const getSchemaFromCollection = collection => this.datapackage.ddfSchema[collection].map(kvPair => ({ key: kvPair.primaryKey, value: kvPair.value }))
 		if (this.datapackage.ddfSchema[collection]) {
-			return this.datapackage.ddfSchema[collection].map(datapackageToSchemaResponse);
+			return getSchemaFromCollection(collection);
 		} else if (collection == "*") {
 			return Object.keys(this.datapackage.ddfSchema)
-				.map(collection => this.datapackage.ddfSchema[collection]
-					.map(datapackageToSchemaResponse))
+				.map(getSchemaFromCollection)
 				.reduce((a,b) => a.concat(b));
 		} else {
 			this.throwError("No valid collection (" + collection + ") for schema query");
 		}
 	},
 
-	fillMissingValues(data, select) {
-		const projection = select.key.concat(select.value);
-		data.forEach(row => {
-			for(let field of projection) {
-				if (typeof row[field] == "undefined") row[field] = null;
-			}
-		});
+	fillMissingValues(row, projection) {
+		for(let field of projection) {
+			if (typeof row[field] == "undefined") row[field] = null;
+		}
+		return row;
 	},
 
 	getOperator(op) {
 		const ops = {
-			/* logical operatotrs */
-			$and: (row, predicates, q) => predicates.map(p => this.applyFilterRow(row,p,q)).reduce((a,b) => a && b),
-			$or:  (row, predicates, q) => predicates.map(p => this.applyFilterRow(row,p,q)).reduce((a,b) => a || b),
-			$not: (row, predicates, q) => !this.applyFilterRow(row, predicate, q),
-			$nor: (row, predicates, q) => !predicates.map(p => this.applyFilterRow(row,p,q)).reduce((a,b) => a || b),
+			/* logical operators */
+			$and: (row, predicates) => predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a && b),
+			$or:  (row, predicates) => predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a || b),
+			$not: (row, predicates) => !this.applyFilterRow(row, predicate, q),
+			$nor: (row, predicates) => !predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a || b),
 
 			/* equality operators */
 			$eq:  (rowValue, filterValue) => rowValue == filterValue,
@@ -128,28 +160,17 @@ let ddfcsvReader = {
 		return ops[op] || null;
 	},
 
-	applyFilter(data, filter = {}, joinLists = {}) {
-		return data.filter((row) => this.applyFilterRow(row, filter, joinLists));
-	},
-
-	applyFilterRow(row, filter, joinLists) {
+	applyFilterRow(row, filter) {
 		return Object.keys(filter).reduce((result, filterKey) => {
 			if (operator = this.getOperator(filterKey)) {
 				// apply operator
-				return result && operator(row, filter[filterKey], joinLists);
+				return result && operator(row, filter[filterKey]);
 			} else if(typeof filter[filterKey] == "string") { 
-				
-				// join entities or time
-				if (filter[filterKey][0] == "$")
-					return result && this.getOperator("$in")(row[filterKey], joinLists[filter[filterKey]]);
-				
 				// { <field>: <value> } is shorthand for { <field>: { $eq: <value> }} 
-				else 
-					return result && this.getOperator("$eq")(row[filterKey], filter[filterKey])
-			
+				return result && this.getOperator("$eq")(row[filterKey], filter[filterKey]);
 			} else {
 				// go one step deeper - doesn't happen yet with DDFQL queries as fields have no depth
-				return result && this.applyFilterRow(row[filterKey], filter[filterKey], joinLists);
+				return result && this.applyFilterRow(row[filterKey], filter[filterKey]);
 			}
 		}, true);
 	},
@@ -168,7 +189,8 @@ let ddfcsvReader = {
 	getFilterFields(filter) {
 		const fields = [];
 		for (field in filter) {
-			if (this.getOperator(field) && Array.isArray(filter[field]))
+			// no support for deeper object structures (mongo style)
+			if (["$and","$or","$not","$nor"].includes(field))
 				filter[field].map(this.getFilterFields.bind(this)).forEach(subFields => fields.push(...subFields))
 			else
 				fields.push(field);
@@ -195,18 +217,21 @@ let ddfcsvReader = {
 	 * @param  {Array} conceptStrings An array of concept strings for which entity aliases are found if they're entity concepts
 	 * @return {Map}                  Map with all aliases as keys and the entity concept as value
 	 */
-	getEntityConceptRenameMap(conceptStrings) {
-		return this.filterConceptsByType(conceptStrings, ["entity_set", "entity_domain"])
+	getEntityConceptRenameMap(queryKey, resourceKey) {
+		const resourceKeySet = new Set(resourceKey);
+		return this.filterConceptsByType(queryKey, ["entity_set", "entity_domain"])
 			.map(concept => this.concepts
 				.filter(lookupConcept => {  
 					if (concept.concept_type == "entity_set")
-						return lookupConcept.concept != concept.concept && // not the actual concept
+						return resourceKeySet.has(lookupConcept.concept) && 
+							lookupConcept.concept != concept.concept && // not the actual concept
 							(
 								lookupConcept.domain == concept.domain ||  // other entity sets in entity domain
 								lookupConcept.concept == concept.domain    // entity domain of the entity set
 							) 
 					else // concept_type == "entity_domain"
-						return lookupConcept.concept != concept.concept && // not the actual concept
+						return resourceKeySet.has(lookupConcept.concept) && 
+							lookupConcept.concept != concept.concept && // not the actual concept
 							lookupConcept.domain == concept.concept          // entity sets of the entity domain
 				})
 				.reduce((map, aliasConcept) => map.set(aliasConcept.concept, concept.concept), new Map())
@@ -261,13 +286,21 @@ let ddfcsvReader = {
 		);
 	},
 
+	loadResources(key, value) {
+		const resources = this.getResources(key, value);
+		return Promise.all([...resources].map(this.loadResource.bind(this)));
+	},
+
 	/**
 	 * Applies a projection to data and renames headers according to a entity concept rename map.
 	 * @param  {Response object} resourceResponse Response object from resource query
 	 * @param  {Select clause object} projection  Object with key and value arrays for respective projections
-	 * @return {2d array}                         Data from resourceResponce with projection and renaming applied
+	 * @return {2d array}                         Data from resourceResponse with projection and renaming applied
 	 */
 	applyProjectionAndRenameHeader(resourceResponse, projection) {
+		const renamed = this.renameEntityHeaders(resourceResponse, projection.key);
+		return this.projectData(renamed, projection.key.concat(projection.value));
+		/*
 		const renameMap = this.getEntityConceptRenameMap(projection.key);
 		const projectionSets = { key: new Set(projection.key), value: new Set(projection.value) };
 		const pk = new Set(resourceResponse.resource.schema.primaryKey);
@@ -294,6 +327,38 @@ let ddfcsvReader = {
 			}
 			return result;
 		});
+		*/
+	},
+
+	projectData(data, projection) {
+		const projectionSet = new Set(projection);
+		return data.map(row => {
+			const result = {};
+			for (concept in row) {
+				if (projectionSet.has(concept)) {
+					result[concept] = row[concept];
+				}
+			}
+			return result;
+		});
+	},
+
+	renameHeader(data, renameMap) {
+		return data.map(row => {
+			const result = {};
+			for (concept in row) {
+				if (renameMap.has(concept)) 
+					result[renameMap.get(concept)] = row[concept];
+				else
+					result[concept] = row[concept];
+			}
+			return result;
+		});		
+	},
+
+	renameEntityHeaders(resourceResponse, keyProjection) {
+		const renameMap = this.getEntityConceptRenameMap(keyProjection, resourceResponse.resource.schema.primaryKey);
+		return this.renameHeader(resourceResponse.data, renameMap);
 	},
 
 	joinData(key, ...data) {
@@ -339,7 +404,10 @@ let ddfcsvReader = {
 				header: true,
 				skipEmptyLines: true,
 				dynamicTyping: function(headerName) {
+					// can't do dynamic typing without concept types loaded. concept properties are not parsed
+					// TODO: concept handling in two steps: first concept & concept_type, then other properties
 					if (!_this.conceptsLookup) return true;
+					// parsing to number/boolean based on concept type
 					const concept = _this.conceptsLookup.get(headerName) || {};
 					return ["boolean", "measure"].includes(concept.concept_type);
 				},
@@ -353,6 +421,17 @@ let ddfcsvReader = {
 			})
 		});
 		return resource.dataPromise;
+	},
+
+	buildResourcesLookup() {
+		if (this.resourcesLookup) return this.resourcesLookup;
+		this.datapackage.resources.forEach(resource => { 
+			if (!Array.isArray(resource.schema.primaryKey)) {
+				resource.schema.primaryKey = [resource.schema.primaryKey];
+			}
+		});
+		this.resourcesLookup = new Map(this.datapackage.resources.map(resource => [resource.name, resource]));
+		return this.resourcesLookup;
 	},
 
 	buildKeyValueLookup() {
@@ -370,17 +449,5 @@ let ddfcsvReader = {
 			})
 		};
 		return this.keyValueLookup;
-	},
-
-
-	buildResourcesLookup() {
-		if (this.resourcesLookup) return this.resourcesLookup;
-		this.datapackage.resources.forEach(resource => { 
-			if (!Array.isArray(resource.schema.primaryKey)) {
-				resource.schema.primaryKey = [resource.schema.primaryKey];
-			}
-		});
-		this.resourcesLookup = new Map(this.datapackage.resources.map(resource => [resource.name, resource]));
-		return this.resourcesLookup;
 	}
 }

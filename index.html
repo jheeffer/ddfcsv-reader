@@ -11,6 +11,16 @@
 	
 		const queries = [{
 			select: {
+				key: ["governorate", "year"],
+				value: ["buildings"]
+			},
+			from: "datapoints",
+			where: {
+				year: { $lt: "2017" },
+				connection_to_electricity: { $lt: 26399 }
+			}
+		},{
+			select: {
 				key: ["key", "value"],
 				value: []
 			},
