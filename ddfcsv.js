@@ -65,13 +65,12 @@ let ddfcsvReader = {
 		// other queries are async
 		return new Promise((resolve, reject) => {
 
-			const projection = select.key.concat(select.value);
-			const filterFields = this.getFilterFields(where).filter(field => !projection.includes(field));
-			select.value = select.value.concat(filterFields); // add fields found only in filter to select.value so they are fetched and can be used for filtering
+			const projection = new Set(select.key.concat(select.value));
+			const filterFields = this.getFilterFields(where).filter(field => !projection.has(field));
 
-			const resourcesPromise    = this.loadResources(select.key, select.value); // load all relevant resources
-			const joinsPromise        = this.getJoinLists(join, query);               // list of values selected from a join clause, effectively used to filter
-			const entityFilterPromise = this.getEntityFilter(select.key);             // filter which ensures result only includes queried entity sets
+			const resourcesPromise    = this.loadResources(select.key, [...select.value, ...filterFields]); // load all relevant resources
+			const joinsPromise        = this.getJoinLists(join, query);    // list of entities selected from a join clause, later insterted in where clause
+			const entityFilterPromise = this.getEntityFilter(select.key);  // filter which ensures result only includes queried entity sets
 
 			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
 				.then(([resources, entityFilter, joinLists]) => {
@@ -80,12 +79,11 @@ let ddfcsvReader = {
 					const filter = this.mergeFilters(entityFilter, where);
 
 					const response = resources
-						.map(resourceResponse => this.applyProjectionAndRenameHeader(resourceResponse, select))
-						.reduce((joinedData, projected) => this.joinData(select.key, joinedData, projected), []) // join resources to one response
+						.map(resource => this.prepareResourceForQuery(resource, select, filterFields)) // rename key-columns and remove irrelevant value-columns
+						.reduce((joinedData, resourceData) => this.joinData(select.key, joinedData, resourceData), [])   // join resources to one response (table)
+						.filter(row => this.applyFilterRow(row, filter))     // apply filters (entity sets and where (including join))
 						.map(row => this.fillMissingValues(row, projection)) // fill any missing values with null values
-						.filter(row => this.applyFilterRow(row, filter)) // apply filters (entity sets and where (including join))
-						.map(row => { filterFields.forEach(field => delete row[field]); return row; }); // remove fields found only in filter. 
-						// Cleaner: Do projection after filter and don't include these fields in projection.
+						.map(row => this.projectRow(row, projection));       // remove fields used only for filtering 
 
 					resolve(response);
 
@@ -180,6 +178,8 @@ let ddfcsvReader = {
 			.then(results => results.reduce(this.mergeObjects, {}));
 	},
 
+	mergeObjects: (a,b) => Object.assign(a,b),
+
 	getJoinList(joinID, join) {
 		const values = this.getFilterFields(join.where);
 		return this.performQuery({ select: { key: [join.key], value: values }, where: join.where })
@@ -197,8 +197,6 @@ let ddfcsvReader = {
 		};
 		return fields;
 	},
-
-	mergeObjects: (a,b) => Object.assign(a,b),
 
 	/**
 	 * Filter concepts by type
@@ -286,79 +284,43 @@ let ddfcsvReader = {
 		);
 	},
 
+	prepareResourceForQuery(resourceResponse, select, filterFields) {
+		const resourcePK = resourceResponse.resource.schema.primaryKey;
+		const resourceProjection = new Set([...resourcePK, ...select.value, ...filterFields]); // all fields used for select or filters
+		const renameMap = this.getEntityConceptRenameMap(select.key, resourcePK);              // rename map to rename relevant entity headers to requested entity concepts
+
+		// Renaming must happen after projection to prevent ambiguity 
+		// E.g. a resource with `<geo>,name,region` fields. Region is an entity set of domain geo.
+		// { select: { key: ["region"], value: ["name"] } } is queried
+		// If one did rename first the file would have headers `<region>,name,region`. 
+		// This would be invalid and make unambiguous projection impossible.
+		// Thus we need to apply projection first with result: `<geo>,name`, then we can rename.
+		return resourceResponse.data
+			.map(row => this.projectRow(row, resourceProjection))	// remove fields not used for select or filter
+			.map(row => this.renameHeaderRow(row, renameMap));    // rename header rows (must happen **after** projection)
+	},
+
 	loadResources(key, value) {
 		const resources = this.getResources(key, value);
 		return Promise.all([...resources].map(this.loadResource.bind(this)));
 	},
 
-	/**
-	 * Applies a projection to data and renames headers according to a entity concept rename map.
-	 * @param  {Response object} resourceResponse Response object from resource query
-	 * @param  {Select clause object} projection  Object with key and value arrays for respective projections
-	 * @return {2d array}                         Data from resourceResponse with projection and renaming applied
-	 */
-	applyProjectionAndRenameHeader(resourceResponse, projection) {
-		const renamed = this.renameEntityHeaders(resourceResponse, projection.key);
-		return this.projectData(renamed, projection.key.concat(projection.value));
-		/*
-		const renameMap = this.getEntityConceptRenameMap(projection.key);
-		const projectionSets = { key: new Set(projection.key), value: new Set(projection.value) };
-		const pk = new Set(resourceResponse.resource.schema.primaryKey);
-		return resourceResponse.data.map(row => {
-			const result = {};
-			for (concept in row) {
-				// following needs to happen in one loop as renaming can create duplicate column headers
-				// if projection isn't applied directly.
-				// E.g. a csv file with `<geo>,name,region` fields. Region is an entity set of domain geo.
-				// { select: { key: ["region"], value: ["name"] } } is queried
-				// After only rename the file would have headers `<region>,name,region`. 
-				// This would be invalid and make unambiguous projection impossible.
-				// Thus we need to apply projection right away with result: `<region>,name`
-
-				// concept is in key: check for renaming
-				if (pk.has(concept)) {
-					const targetConcept = renameMap.get(concept) || concept;
-					result[targetConcept] = row[concept];
-				}
-				// concept is in value: will not interfere with renamed keys
-				if (projectionSets.value.has(concept)) {
-					result[concept] = row[concept];
-				}
+	projectRow(row, projectionSet) {
+		const result = {};
+		for (concept in row) {
+			if (projectionSet.has(concept)) {
+				result[concept] = row[concept];
 			}
-			return result;
-		});
-		*/
+		}
+		return result;	
 	},
 
-	projectData(data, projection) {
-		const projectionSet = new Set(projection);
-		return data.map(row => {
-			const result = {};
-			for (concept in row) {
-				if (projectionSet.has(concept)) {
-					result[concept] = row[concept];
-				}
-			}
-			return result;
-		});
-	},
-
-	renameHeader(data, renameMap) {
-		return data.map(row => {
-			const result = {};
-			for (concept in row) {
-				if (renameMap.has(concept)) 
-					result[renameMap.get(concept)] = row[concept];
-				else
-					result[concept] = row[concept];
-			}
-			return result;
-		});		
-	},
-
-	renameEntityHeaders(resourceResponse, keyProjection) {
-		const renameMap = this.getEntityConceptRenameMap(keyProjection, resourceResponse.resource.schema.primaryKey);
-		return this.renameHeader(resourceResponse.data, renameMap);
+	renameHeaderRow(row, renameMap) {
+		const result = {};
+		for (concept in row) {
+			result[renameMap.get(concept) || concept] = row[concept];
+		}
+		return result;		
 	},
 
 	joinData(key, ...data) {
