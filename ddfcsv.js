@@ -44,7 +44,8 @@ let ddfcsvReader = {
 			result = result
 				.filter(concept => concept.concept_type == "entity_set")
 				.map(concept => ({ concept: "is--" + concept.concept, concept_type: "boolean", domain: null }))
-				.concat(result);
+				.concat(result)
+				.concat({ concept: "concept", concept_type: "string", domain: null });
 			this.concepts = result;
 			this.conceptsLookup = this.buildDataLookup(this.concepts, "concept");
 		});
