@@ -182,7 +182,7 @@ let ddfcsvReader = {
 	mergeObjects: (a,b) => Object.assign(a,b),
 
 	getJoinList(joinID, join) {
-		const values = this.getFilterFields(join.where);
+		const values = this.getFilterFields(join.where).filter(field => field != join.key);
 		return this.performQuery({ select: { key: [join.key], value: values }, where: join.where })
 			.then(result => ({ [joinID]: result.map(row => row[join.key]) }));
 	},
