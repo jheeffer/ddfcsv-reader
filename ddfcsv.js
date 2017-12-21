@@ -164,7 +164,7 @@ let ddfcsvReader = {
 			if (operator = this.getOperator(filterKey)) {
 				// apply operator
 				return result && operator(row, filter[filterKey]);
-			} else if(typeof filter[filterKey] == "string") { 
+			} else if(typeof filter[filterKey] != "object") { // assuming values are primitives not Number/Boolean/String objects
 				// { <field>: <value> } is shorthand for { <field>: { $eq: <value> }} 
 				return result && this.getOperator("$eq")(row[filterKey], filter[filterKey]);
 			} else {
