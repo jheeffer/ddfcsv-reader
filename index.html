@@ -15,6 +15,7 @@
 
 	const cases = [
 		// bad - error
+		/*
 		{
 			ds: 'data/systema_globalis',
 			query: {
@@ -46,6 +47,7 @@
 				orderBy: null
 			}
 		},
+		
 		// bad - should be 4 records selected, but current records quantity is 296
 		{
 			ds: 'data/systema_globalis',
@@ -245,6 +247,7 @@
 				order_by: ['time']
 			}
 		},
+		*/
 		// bad - should be 28902 records selected, but current records quantity is 0
 		{
 			ds: 'data/population_wpp',
@@ -264,7 +267,7 @@
 				},
 				order_by: ['year']
 			}
-		},
+		}/*,
 		{
 			ds: 'data/systema_globalis_tiny',
 			query: {
@@ -302,7 +305,7 @@
 				},
 				order_by: ['time']
 			}
-		}
+		}*/
 	];
 
 	Promise.all(cases.map(testCase => testTemplate(testCase.ds, testCase.query))).then(result => {

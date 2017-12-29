@@ -1,3 +1,8 @@
+Array.prototype.debug = function() {
+	console.log(this);
+	return this;
+}
+
 let ddfcsvReader = {
 
 	keyValueLookup: null,
@@ -69,26 +74,28 @@ let ddfcsvReader = {
 			const projection = new Set(select.key.concat(select.value));
 			const filterFields = this.getFilterFields(where).filter(field => !projection.has(field));
 
-			const resourcesPromise    = this.loadResources(select.key, [...select.value, ...filterFields]); // load all relevant resources
-			const joinsPromise        = this.getJoinLists(join, query);    // list of entities selected from a join clause, later insterted in where clause
-			const entityFilterPromise = this.getEntityFilter(select.key);  // filter which ensures result only includes queried entity sets
+			this.getJoinLists(join, query)
+				.then(joinLists => {
+					this.resolveJoinsInWhere(where, joinLists);                          // replace $join placeholders with { $in: [...] } operators
+					const resourcesPromise    = this.loadResources(query, filterFields); // load all relevant resources
+					const entityFilterPromise = this.getEntityFilter(select.key);        // filter which ensures result only includes queried entity sets
+					return Promise.all([resourcesPromise, entityFilterPromise]);
+				})
+				.then(([resources, entityFilter]) => {
 
-			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
-				.then(([resources, entityFilter, joinLists]) => {
-
-					this.resolveJoinsInWhere(where, joinLists);            // replace $join placeholders with { $in: [...] } operators
 					const filter = this.mergeFilters(entityFilter, where);
 
 					const response = resources
 						.map(resource => this.prepareResourceForQuery(resource, select, filterFields)) // rename key-columns and remove irrelevant value-columns
 						.reduce((joinedData, resourceData) => this.joinData(select.key, joinedData, resourceData), [])   // join resources to one response (table)
 						.filter(row => this.applyFilterRow(row, filter))     // apply filters (entity sets and where (including join))
+						.debug()
 						.map(row => this.fillMissingValues(row, projection)) // fill any missing values with null values
 						.map(row => this.projectRow(row, projection));       // remove fields used only for filtering 
 
 					resolve(response);
 
-				});       
+				});     
 		});
 	},
 
@@ -305,9 +312,33 @@ let ddfcsvReader = {
 			.map(row => this.renameHeaderRow(row, renameMap));    // rename header rows (must happen **after** projection)
 	},
 
-	loadResources(key, value) {
-		const resources = this.getResources(key, value);
-		return Promise.all([...resources].map(this.loadResource.bind(this)));
+	loadResources(query, filterFields) {
+		const key = query.select.key,
+		      value = [...query.select.value, ...filterFields],
+		      resources = [...this.getResources(key, value)];
+    resources.filter(r => this.filterOnConstraints(r, query));
+		return Promise.all(resources.map(this.loadResource.bind(this)));
+	},
+
+	filterOnConstraints(resource, query) {
+		const filter = { "$and": [query.where]};
+		resource.schema.fields.forEach(field => {
+			if (field.constraints) {
+				if (field.constraints.enum) {
+					const enums = field.constraints.enum.map(val => ({ [field.name]: { "$eq": val } }));
+					if (enums.length==1)
+						filter["$and"].push(enums[0]);
+					else
+						filter["$and"].push({ "$or": enums});
+				}
+			}
+		});
+		this.convertToDNF(filter);
+		return true;
+	},
+
+	convertToDNF(filter) {
+
 	},
 
 	projectRow(row, projectionSet) {
