@@ -143,7 +143,7 @@ let ddfcsvReader = {
 			/* logical operators */
 			$and: (row, predicates) => predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a && b),
 			$or:  (row, predicates) => predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a || b),
-			$not: (row, predicates) => !this.applyFilterRow(row, predicate, q),
+			$not: (row, predicates) => !this.applyFilterRow(row, predicate),
 			$nor: (row, predicates) => !predicates.map(p => this.applyFilterRow(row,p)).reduce((a,b) => a || b),
 
 			/* equality operators */
@@ -266,6 +266,7 @@ let ddfcsvReader = {
 	 * @return {Array}              Array of resource objects
 	 */
 	getResources(key, value) {
+		// value not given, load all resources for key
 		if (!value || value.length == 0) {
 			return new Set(
 				[...this.keyValueLookup
@@ -274,11 +275,13 @@ let ddfcsvReader = {
 				].reduce((a,b) => a.concat(b))
 			)
 		}
+		// multiple values
 		if (Array.isArray(value)) {
 			return value
 				.map(singleValue => this.getResources(key,singleValue))
 				.reduce((resultSet,resources) => new Set([...resultSet,...resources]), new Set());
 		}
+		// one key, one value
 		return new Set(
 			this.keyValueLookup
 				.get(this.createKeyString(key))
