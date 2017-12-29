@@ -70,13 +70,13 @@ let ddfcsvReader = {
 			const filterFields = this.getFilterFields(where).filter(field => !projection.has(field));
 
 			const resourcesPromise    = this.loadResources(select.key, [...select.value, ...filterFields]); // load all relevant resources
-			const joinsPromise        = this.getJoinLists(join, query);    // list of entities selected from a join clause, later insterted in where clause
+			const joinsPromise        = this.getJoinFilters(join, query);    // list of entities selected from a join clause, later insterted in where clause
 			const entityFilterPromise = this.getEntityFilter(select.key);  // filter which ensures result only includes queried entity sets
 
 			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
-				.then(([resources, entityFilter, joinLists]) => {
+				.then(([resources, entityFilter, joinFilters]) => {
 
-					this.resolveJoinsInWhere(where, joinLists);            // replace $join placeholders with { $in: [...] } operators
+					this.resolveJoinsInWhere(where, joinFilters);            // replace $join placeholders with { $in: [...] } operators
 					const filter = this.mergeFilters(entityFilter, where);
 
 					const response = resources
@@ -95,18 +95,23 @@ let ddfcsvReader = {
 	/**
 	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator. Impure method: `where` parameter is edited.
 	 * @param  {Object} where     Where clause possibly containing $join placeholders as field values. 
-	 * @param  {Object} joinLists Collection of lists of entity or time values, coming from other tables defined in query `join` clause.
+	 * @param  {Object} joinFilters Collection of lists of entity or time values, coming from other tables defined in query `join` clause.
 	 * @return {undefined}        Changes where parameter in-place. Does not return.
 	 */
-	resolveJoinsInWhere(where, joinLists) {
+	resolveJoinsInWhere(where, joinFilters) {
 		for (field in where) {
+			var fieldValue = where[field];
 			// no support for deeper object structures (mongo style) { foo: { bar: "3", baz: true }}
 			if (["$and","$or","$nor"].includes(field))
-				where[field].forEach(subFilter => this.resolveJoinsInWhere(subFilter, joinLists));
+				fieldValue.forEach(subFilter => this.resolveJoinsInWhere(subFilter, joinFilters));
 			else if (field == "$not")
-				this.resolveJoinsInWhere(where[field], joinLists);
-			else if (joinLists[where[field]])
-				where[field] = { "$in": joinLists[where[field]] };
+				this.resolveJoinsInWhere(fieldValue, joinFilters);
+			else if (joinFilters[fieldValue]) {
+				// need to remove original where[field] because joinFilter can contain $and/$or statements in case of time concept (join-where is directly copied, not executed)
+				// otherwise could end up with where: { year: { $and: [{ ... }]}}, which is invalid (no boolean ops inside field objects)
+				delete where[field];
+				Object.assign(where, joinFilters[fieldValue]);
+			}
 		};
 	},
 
@@ -174,17 +179,34 @@ let ddfcsvReader = {
 		}, true);
 	},
 
-	getJoinLists(join) {
-		return Promise.all(Object.keys(join).map(joinID => this.getJoinList(joinID, join[joinID])))
+	getJoinFilters(join) {
+		return Promise.all(Object.keys(join).map(joinID => this.getJoinFilter(joinID, join[joinID])))
 			.then(results => results.reduce(this.mergeObjects, {}));
 	},
 
 	mergeObjects: (a,b) => Object.assign(a,b),
 
-	getJoinList(joinID, join) {
+	getJoinFilter(joinID, join) {
 		const values = this.getFilterFields(join.where).filter(field => field != join.key);
-		return this.performQuery({ select: { key: [join.key], value: values }, where: join.where })
-			.then(result => ({ [joinID]: result.map(row => row[join.key]) }));
+
+		// assumption: join.key is same as field in where clause 
+		//  - where: { geo: $geo }, join: { "$geo": { key: geo, where: { ... }}}
+		//  - where: { year: $year }, join: { "$year": { key: year, where { ... }}}
+		if (this.conceptsLookup.get(join.key).concept_type == "time") {
+			// time, no query needed as time values are not explicitly in the data
+			// assumption: there are no time-properties. E.g. data like <year>,population
+			return Promise.resolve({ [joinID]: join.where });
+		}	else {
+			// entity concept
+			return this.performQuery({ select: { key: [join.key], value: values }, where: join.where })
+				.then(result => ({ 
+					[joinID]: {
+						[join.key]: { 
+							"$in": result.map(row => row[join.key]) 
+						} 
+					}
+				}));
+		}
 	},
 
 	getFilterFields(filter) {
@@ -205,8 +227,7 @@ let ddfcsvReader = {
 	 * @param  {Array} concept_types    Array of concept types to filter out
 	 * @return {Array}                  Array of concept strings only of given types
 	 */
-	filterConceptsByType(conceptStrings = [...this.conceptLookup.keys()], concept_types) {
-    // ...this.conceptsLookup.keys() ???
+	filterConceptsByType(conceptStrings = [...this.conceptsLookup.keys()], concept_types) {
 		return conceptStrings
 			.filter(conceptString => this.conceptsLookup && concept_types.includes(this.conceptsLookup.get(conceptString).concept_type))
 			.map(conceptString => this.conceptsLookup.get(conceptString));
