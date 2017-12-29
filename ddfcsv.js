@@ -93,7 +93,7 @@ let ddfcsvReader = {
 	},
 
 	/**
-	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator. Impure method: `where` parameter is edited.
+	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator. Impure method: `where` parameter is edited. Improvement would make a deep copy first.
 	 * @param  {Object} where     Where clause possibly containing $join placeholders as field values. 
 	 * @param  {Object} joinFilters Collection of lists of entity or time values, coming from other tables defined in query `join` clause.
 	 * @return {undefined}        Changes where parameter in-place. Does not return.

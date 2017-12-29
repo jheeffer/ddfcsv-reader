@@ -1,0 +1,8 @@
+﻿concept,concept_type,domain
+domain,string,
+currency,entity_domain,
+name,string,
+exchange_rate_usd,measure,
+country,string,
+day,time,
+month,time,

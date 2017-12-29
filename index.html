@@ -7,7 +7,7 @@
 		ddfcsv.loadDataset(`${ds}/datapackage.json`)
 			.then(() => {
 				ddfcsv.performQuery(query).then(result => {
-					console.log(query, result.length);
+					console.log(query, result.length, result);
 					resolve(result);
 				});
 			});
@@ -151,6 +151,42 @@
 			}
 		},
 		{
+			ds: 'data/ddf--gapminder--date_testing',
+			query: {
+				select: {
+					key: ['currency', 'day'],
+					value: [
+						'exchange_rate_usd'
+					]
+				},
+				from: 'datapoints',
+				where: {
+					$and: [
+						{ day: { $lt: "20151230" }},
+						{ day: { $gt: "20151220" }}
+					]
+				}
+			}
+		},
+		{
+			ds: 'data/ddf--gapminder--date_testing',
+			query: {
+				select: {
+					key: ['currency', 'month'],
+					value: [
+						'exchange_rate_usd'
+					]
+				},
+				from: 'datapoints',
+				where: {
+					$and: [
+						{ month: { $lt: "2015-01" }},
+						{ month: { $gt: "2014-05" }}
+					]
+				}
+			}
+		},
+		{
 			ds: 'data/systema_globalis',
 			query: {
 				select: {
@@ -163,8 +199,7 @@
 				where: {
 					$and: [
 						{ geo: '$geo' },
-						// { time: '$time' },
-						{ time: { $gt: '1990', $lte: '2015' } },
+						{ time: '$time' },
 						{
 							$or: [
 								{ population_total: { $gt: 10000 } },
@@ -182,11 +217,11 @@
 								{ latitude: { $lte: 0 } }
 							]
 						}
-					} //,
-					// $time: {
-					//	key: 'time',
-					//	where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
-					// }
+					},
+					$time: {
+						key: 'time',
+						where: { $and: [{ time: { $gt: '1990', $lte: '2015' } }] }
+					}
 				}
 			}
 		},

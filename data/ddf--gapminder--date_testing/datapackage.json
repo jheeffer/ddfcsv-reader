@@ -1,0 +1,166 @@
+{
+  "name": "ddf--gapminder--date_testing",
+  "title": "ddf--gapminder--date_testing",
+  "description": "",
+  "version": "0.0.1",
+  "language": {
+    "id": "en",
+    "name": "English"
+  },
+  "translations": [],
+  "license": "",
+  "author": "",
+  "resources": [
+    {
+      "path": "ddf--concepts.csv",
+      "name": "ddf--concepts",
+      "schema": {
+        "fields": [
+          {
+            "name": "concept"
+          },
+          {
+            "name": "concept_type"
+          },
+          {
+            "name": "domain"
+          }
+        ],
+        "primaryKey": "concept"
+      }
+    },
+    {
+      "path": "ddf--datapoints--exchange_rate_usd--by--currency--day.csv",
+      "name": "exchange_rate_usd--by--currency--day",
+      "schema": {
+        "fields": [
+          {
+            "name": "currency"
+          },
+          {
+            "name": "day"
+          },
+          {
+            "name": "exchange_rate_usd"
+          }
+        ],
+        "primaryKey": [
+          "currency",
+          "day"
+        ]
+      }
+    },
+    {
+      "path": "ddf--datapoints--exchange_rate_usd--by--currency--month.csv",
+      "name": "exchange_rate_usd--by--currency--month",
+      "schema": {
+        "fields": [
+          {
+            "name": "currency"
+          },
+          {
+            "name": "month"
+          },
+          {
+            "name": "exchange_rate_usd"
+          }
+        ],
+        "primaryKey": [
+          "currency",
+          "month"
+        ]
+      }
+    },
+    {
+      "path": "ddf--entities--currency.csv",
+      "name": "currency",
+      "schema": {
+        "fields": [
+          {
+            "name": "currency"
+          },
+          {
+            "name": "name"
+          },
+          {
+            "name": "country"
+          }
+        ],
+        "primaryKey": "currency"
+      }
+    }
+  ],
+  "ddfSchema": {
+    "datapoints": [
+      {
+        "primaryKey": [
+          "currency",
+          "day"
+        ],
+        "value": "exchange_rate_usd",
+        "resources": [
+          "exchange_rate_usd--by--currency--day"
+        ]
+      },
+      {
+        "primaryKey": [
+          "currency",
+          "month"
+        ],
+        "value": "exchange_rate_usd",
+        "resources": [
+          "exchange_rate_usd--by--currency--month"
+        ]
+      }
+    ],
+    "entities": [
+      {
+        "primaryKey": [
+          "currency"
+        ],
+        "value": "country",
+        "resources": [
+          "currency"
+        ]
+      },
+      {
+        "primaryKey": [
+          "currency"
+        ],
+        "value": "name",
+        "resources": [
+          "currency"
+        ]
+      },
+      {
+        "primaryKey": [
+          "day"
+        ],
+        "value": "exchange_rate_usd",
+        "resources": [
+          "exchange_rate_usd--by--currency--day"
+        ]
+      }
+    ],
+    "concepts": [
+      {
+        "primaryKey": [
+          "concept"
+        ],
+        "value": "concept_type",
+        "resources": [
+          "ddf--concepts"
+        ]
+      },
+      {
+        "primaryKey": [
+          "concept"
+        ],
+        "value": "domain",
+        "resources": [
+          "ddf--concepts"
+        ]
+      }
+    ]
+  }
+}
