@@ -335,7 +335,7 @@
 				join: {
 					$geo: { key: 'geo', where: { 'un_state': true } }
 				},
-				order_by: ['time']
+				order_by: ['time', { 'geo': "desc" }]
 			}
 		}
 	];

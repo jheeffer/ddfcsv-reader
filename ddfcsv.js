@@ -57,7 +57,7 @@ let ddfcsvReader = {
 	},
 
 	performQuery(query) {
-		const { select, from="", where = {}, join = {}, order } = query;
+		const { select, from="", where = {}, join = {}, order_by } = query;
 
 		// schema queries can be answered synchronously (after datapackage is loaded)
 		if (from.split(".")[1] == "schema") 
@@ -86,10 +86,41 @@ let ddfcsvReader = {
 						.map(row => this.fillMissingValues(row, projection)) // fill any missing values with null values
 						.map(row => this.projectRow(row, projection));       // remove fields used only for filtering 
 
+					this.orderResponse(response, order_by);
+
 					resolve(response);
 
 				});       
 		});
+	},
+
+	orderResponse(response, order_by = []) {
+		if (order_by.length == 0) return;
+
+		// process ["geo"] or [{"geo": "asc"}] to [{ concept: "geo", order: 1 }];
+		const orderNormalized = order_by.map(orderPart => {
+			if (typeof orderPart == "string")
+				return { concept: orderPart, order: 1 } 
+			else {
+				const concept = Object.keys(orderPart)[0];
+				return { concept: concept, order: (orderPart[concept] == "asc" ? 1 : -1) }
+			}
+		});
+
+		// sort by one or more fields
+		const n = orderNormalized.length;
+		response.sort((a,b) => {
+			for (let i = 0; i < n; i++) {
+				const order = orderNormalized[i];
+				if (a[order.concept] < b[order.concept])
+					return -1 * order.order;
+				else
+					if (a[order.concept] > b[order.concept])
+						return 1 * order.order;
+			} 
+			return 0;
+		});
+
 	},
 
 	/**
