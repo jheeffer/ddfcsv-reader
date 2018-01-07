@@ -40,10 +40,18 @@ let ddfcsvReader = {
 	},
 
 	buildConceptsLookup() {
-		return this.performQuery({ select: { key: ["concept"], value: ["concept_type", "domain"] }, from: "concepts" }).then(result => {
+		const conceptQuery = {
+			select: { key: ["concept"], value: ["concept_type", "domain"] }, 
+			from: "concepts" 
+		};
+		return this.performQuery(conceptQuery).then(result => {
 			result = result
 				.filter(concept => concept.concept_type == "entity_set")
-				.map(concept => ({ concept: "is--" + concept.concept, concept_type: "boolean", domain: null }))
+				.map(concept => ({ 
+					concept: "is--" + concept.concept, 
+					concept_type: "boolean", 
+					domain: null 
+				}))
 				.concat(result)
 				.concat({ concept: "concept", concept_type: "string", domain: null });
 			this.concepts = result;
@@ -99,11 +107,12 @@ let ddfcsvReader = {
 
 		// process ["geo"] or [{"geo": "asc"}] to [{ concept: "geo", order: 1 }];
 		const orderNormalized = order_by.map(orderPart => {
-			if (typeof orderPart == "string")
-				return { concept: orderPart, order: 1 } 
-			else {
-				const concept = Object.keys(orderPart)[0];
-				return { concept: concept, order: (orderPart[concept] == "asc" ? 1 : -1) }
+			if (typeof orderPart == "string") {
+				return { concept: orderPart, order: 1 };
+			}	else {
+				const concept   = Object.keys(orderPart)[0];
+				const direction = (orderPart[concept] == "asc" ? 1 : -1);
+				return { concept, direction };
 			}
 		});
 
@@ -224,7 +233,7 @@ let ddfcsvReader = {
 		//  - where: { geo: $geo }, join: { "$geo": { key: geo, where: { ... }}}
 		//  - where: { year: $year }, join: { "$year": { key: year, where { ... }}}
 		if (this.conceptsLookup.get(join.key).concept_type == "time") {
-			// time, no query needed as time values are not explicitly in the data
+			// time, no query needed as time values are not explicit in the dataset
 			// assumption: there are no time-properties. E.g. data like <year>,population
 			return Promise.resolve({ [joinID]: join.where });
 		}	else {
@@ -449,7 +458,9 @@ let ddfcsvReader = {
 				resource.schema.primaryKey = [resource.schema.primaryKey];
 			}
 		});
-		this.resourcesLookup = new Map(this.datapackage.resources.map(resource => [resource.name, resource]));
+		this.resourcesLookup = new Map(this.datapackage.resources.map(
+			resource => [resource.name, resource]
+		));
 		return this.resourcesLookup;
 	},
 
@@ -459,7 +470,9 @@ let ddfcsvReader = {
 		for (let collection in this.datapackage.ddfSchema) {
 			this.datapackage.ddfSchema[collection].map(kvPair => {
 				const key = this.createKeyString(kvPair.primaryKey);
-				const resources = kvPair.resources.map(resourceName => this.resourcesLookup.get(resourceName));
+				const resources = kvPair.resources.map(
+					resourceName => this.resourcesLookup.get(resourceName)
+				);
 				if (this.keyValueLookup.has(key)) {
 					this.keyValueLookup.get(key).set(kvPair.value, resources);
 				} else {
