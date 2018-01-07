@@ -84,8 +84,8 @@ let ddfcsvReader = {
 			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
 				.then(([resourceResponses, entityFilter, joinFilters]) => {
 
-					this.resolveJoinsInWhere(where, joinFilters);            // replace $join placeholders with { $in: [...] } operators
-					const filter = this.mergeFilters(entityFilter, where);
+					const whereResolved = this.resolveJoinsInWhere(where, joinFilters); // replace $join placeholders with { $in: [...] } operators
+					const filter = this.mergeFilters(entityFilter, whereResolved);
 
 					const dataTables = resourceResponses
 						.map(response => this.processResourceResponse(response, select, filterFields)); // rename key-columns and remove irrelevant value-columns
@@ -133,26 +133,30 @@ let ddfcsvReader = {
 	},
 
 	/**
-	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator. Impure method: `where` parameter is edited. Improvement would make a deep copy first.
+	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator.
 	 * @param  {Object} where     Where clause possibly containing $join placeholders as field values. 
 	 * @param  {Object} joinFilters Collection of lists of entity or time values, coming from other tables defined in query `join` clause.
-	 * @return {undefined}        Changes where parameter in-place. Does not return.
+	 * @return {Object}           Where clause with $join placeholders replaced by valid filter statements
 	 */
 	resolveJoinsInWhere(where, joinFilters) {
+		const result = {};
 		for (field in where) {
 			var fieldValue = where[field];
 			// no support for deeper object structures (mongo style) { foo: { bar: "3", baz: true }}
 			if (["$and","$or","$nor"].includes(field))
-				fieldValue.forEach(subFilter => this.resolveJoinsInWhere(subFilter, joinFilters));
+				result[field] = fieldValue.map(subFilter => this.resolveJoinsInWhere(subFilter, joinFilters));
 			else if (field == "$not")
-				this.resolveJoinsInWhere(fieldValue, joinFilters);
-			else if (joinFilters[fieldValue]) {
-				// need to remove original where[field] because joinFilter can contain $and/$or statements in case of time concept (join-where is directly copied, not executed)
+				result[field] = this.resolveJoinsInWhere(fieldValue, joinFilters);
+			else if (typeof joinFilters[fieldValue] != "undefined") {
+				// not assigning to result[field] because joinFilter can contain $and/$or statements in case of time concept (join-where is directly copied, not executed)
 				// otherwise could end up with where: { year: { $and: [{ ... }]}}, which is invalid (no boolean ops inside field objects)
-				delete where[field];
-				Object.assign(where, joinFilters[fieldValue]);
+				// in case of entity join, joinFilters contains correct field
+				Object.assign(result, joinFilters[fieldValue]);
+			} else {
+				result[field] = fieldValue;
 			}
 		};
+		return result;
 	},
 
 	mergeFilters(...filters) {
