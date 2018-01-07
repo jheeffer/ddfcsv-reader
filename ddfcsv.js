@@ -65,7 +65,7 @@ let ddfcsvReader = {
 	},
 
 	performQuery(query) {
-		const { select, from="", where = {}, join = {}, order_by } = query;
+		const { select, from="", where = {}, join = {}, order_by = [], language } = query;
 
 		// schema queries can be answered synchronously (after datapackage is loaded)
 		if (from.split(".")[1] == "schema") 
@@ -77,32 +77,33 @@ let ddfcsvReader = {
 			const projection = new Set(select.key.concat(select.value));
 			const filterFields = this.getFilterFields(where).filter(field => !projection.has(field));
 
-			const resourcesPromise    = this.loadResources(select.key, [...select.value, ...filterFields]); // load all relevant resources
+			const resourcesPromise    = this.loadResources(select.key, [...select.value, ...filterFields], language); // load all relevant resources
 			const joinsPromise        = this.getJoinFilters(join, query);    // list of entities selected from a join clause, later insterted in where clause
 			const entityFilterPromise = this.getEntityFilter(select.key);  // filter which ensures result only includes queried entity sets
 
 			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
-				.then(([resources, entityFilter, joinFilters]) => {
+				.then(([resourceResponses, entityFilter, joinFilters]) => {
 
 					this.resolveJoinsInWhere(where, joinFilters);            // replace $join placeholders with { $in: [...] } operators
 					const filter = this.mergeFilters(entityFilter, where);
 
-					const response = resources
-						.map(resource => this.prepareResourceForQuery(resource, select, filterFields)) // rename key-columns and remove irrelevant value-columns
-						.reduce((joinedData, resourceData) => this.joinData(select.key, joinedData, resourceData), [])   // join resources to one response (table)
+					const dataTables = resourceResponses
+						.map(response => this.processResourceResponse(response, select, filterFields)); // rename key-columns and remove irrelevant value-columns
+					
+					const queryResult = this.joinData(select.key, "overwrite", ...dataTables)  // join (reduce) data to one data table
 						.filter(row => this.applyFilterRow(row, filter))     // apply filters (entity sets and where (including join))
 						.map(row => this.fillMissingValues(row, projection)) // fill any missing values with null values
 						.map(row => this.projectRow(row, projection));       // remove fields used only for filtering 
 
-					this.orderResponse(response, order_by);
+					this.orderData(queryResult, order_by);
 
-					resolve(response);
+					resolve(queryResult);
 
 				});       
 		});
 	},
 
-	orderResponse(response, order_by = []) {
+	orderData(data, order_by = []) {
 		if (order_by.length == 0) return;
 
 		// process ["geo"] or [{"geo": "asc"}] to [{ concept: "geo", order: 1 }];
@@ -118,14 +119,13 @@ let ddfcsvReader = {
 
 		// sort by one or more fields
 		const n = orderNormalized.length;
-		response.sort((a,b) => {
+		data.sort((a,b) => {
 			for (let i = 0; i < n; i++) {
 				const order = orderNormalized[i];
 				if (a[order.concept] < b[order.concept])
-					return -1 * order.order;
-				else
-					if (a[order.concept] > b[order.concept])
-						return 1 * order.order;
+					return -1 * order.direction;
+				else if (a[order.concept] > b[order.concept])
+					return 1 * order.direction;
 			} 
 			return 0;
 		});
@@ -350,25 +350,26 @@ let ddfcsvReader = {
 		);
 	},
 
-	prepareResourceForQuery(resourceResponse, select, filterFields) {
-		const resourcePK = resourceResponse.resource.schema.primaryKey;
+	processResourceResponse(response, select, filterFields) {
+		const resourcePK = response.resource.schema.primaryKey;
 		const resourceProjection = new Set([...resourcePK, ...select.value, ...filterFields]); // all fields used for select or filters
-		const renameMap = this.getEntityConceptRenameMap(select.key, resourcePK);              // rename map to rename relevant entity headers to requested entity concepts
+		const renameMap = this.getEntityConceptRenameMap(select.key, resourcePK);     // rename map to rename relevant entity headers to requested entity concepts
 
 		// Renaming must happen after projection to prevent ambiguity 
-		// E.g. a resource with `<geo>,name,region` fields. Region is an entity set of domain geo.
+		// E.g. a resource with `<geo>,name,region` fields. 
+		// Assume `region` is an entity set in domain `geo`.
 		// { select: { key: ["region"], value: ["name"] } } is queried
 		// If one did rename first the file would have headers `<region>,name,region`. 
 		// This would be invalid and make unambiguous projection impossible.
 		// Thus we need to apply projection first with result: `<geo>,name`, then we can rename.
-		return resourceResponse.data
+		return response.data
 			.map(row => this.projectRow(row, resourceProjection))	// remove fields not used for select or filter
 			.map(row => this.renameHeaderRow(row, renameMap));    // rename header rows (must happen **after** projection)
 	},
 
-	loadResources(key, value) {
-		const resources = this.getResources(key, value);
-		return Promise.all([...resources].map(this.loadResource.bind(this)));
+	loadResources(key, value, language) {
+		const resources = this.getResources(key, value, language);
+		return Promise.all([...resources].map(resource => this.loadResource(resource, language)));
 	},
 
 	projectRow(row, projectionSet) {
@@ -389,23 +390,13 @@ let ddfcsvReader = {
 		return result;		
 	},
 
-	joinData(key, ...data) {
-
+	joinData(key, joinMode, ...data) {
 		const dataMap = data.reduce((result, data) => {
 			data.forEach(row => {
-				const keyString = this.createKeyString(key.map(keyPart => row[keyPart]));
+				const keyString = this.createKeyString(key, row);
 				if (result.has(keyString)) {
 					const resultRow = result.get(keyString);
-					Object.assign(resultRow, row);
-					/* Alternative for line above: with JOIN error detection
-					for (concept in row) {
-						if (resultRow[concept] && resultRow[concept] != row[concept]) {
-							this.throwError("JOIN Error: two resources have different data for same key-value pair.");
-						} else {
-							resultRow[concept] = row[concept];
-						}
-					}
-					*/
+					this.joinRow(resultRow, row, joinMode);
 				} else {
 					result.set(keyString, row)
 				}
@@ -415,40 +406,102 @@ let ddfcsvReader = {
 		return [...dataMap.values()];
 	},
 
+	joinRow(resultRow, sourceRow, mode) {
+		switch(mode) {
+			case "overwrite":		
+				/* Simple alternative without empty value or error handling */
+				Object.assign(resultRow, sourceRow);
+				break;
+			case "translation":
+				// Translation joining ignores empty values 
+				// and allows different values for strings (= translations)
+				for (concept in sourceRow) {
+					if (sourceRow[concept] != "") {
+						resultRow[concept] = sourceRow[concept];
+					}
+				}
+				break;
+			case "overwriteWithError":
+				/* Alternative for "overwrite" with JOIN error detection */
+				for (concept in sourceRow) {
+					if (resultRow[concept] && resultRow[concept] != sourceRow[concept]) {
+						this.throwError("JOIN Error: two resources have different data for key-value pair " + key + "," + concept + ".");
+					} else {
+						resultRow[concept] = sourceRow[concept];
+					}
+				}		
+				break;				
+		}
+	},
+
 	throwError(error) {
 		console.error(error);
 	},
 
-	createKeyString(keyArray) {
-		return keyArray.slice(0).sort().join(",");
+	createKeyString(key, row = false) {
+		const canonicalKey = key.slice(0).sort();
+		if (!row)
+			return canonicalKey.join(",");
+		else
+			return canonicalKey
+				.map(concept => row[concept])
+				.join(",");
 	},
 
-	loadResource(resource) {
+	loadResource(resource, language) {
+		const filePromises = [];
+
+		if (typeof resource.data == "undefined") {
+			resource.data = this.loadFile(this.basePath + resource.path);
+		}
+		filePromises.push(resource.data);
+
+		const languageValid = typeof language != "undefined" && this.getLanguages().includes(language);
+		const languageLoaded = typeof resource.translations[language] != "undefined";
+		if (languageValid) {
+			if (!languageLoaded) {
+				const path = this.basePath + "lang/" + language + "/" + resource.path;
+				resource.translations[language] = this.loadFile(path);	
+			}
+			filePromises.push(resource.translations[language]);
+		}	
+
+		return Promise.all(filePromises).then(fileResponses => {
+			const filesData = fileResponses.map(resp => resp.data);
+			const primaryKey = resource.schema.primaryKey;
+			const data = this.joinData(primaryKey, "translation", ...filesData);
+			return { data, resource };
+		});
+
+	},
+
+	getLanguages() {
+		return [
+			this.datapackage.translations.map(lang => lang.id)
+		];
+	},
+
+	loadFile(filePath) {
 		const _this = this;
-		if (resource.dataPromise) return resource.dataPromise;
-		resource.dataPromise = new Promise((resolve, reject) => {
-			Papa.parse(this.basePath + resource.path, {
+		return new Promise((resolve, reject) => {
+			Papa.parse(filePath, {
 				download: true,
 				header: true,
 				skipEmptyLines: true,
 				dynamicTyping: function(headerName) {
-					// can't do dynamic typing without concept types loaded. concept properties are not parsed
-					// TODO: concept handling in two steps: first concept & concept_type, then other properties
+					// can't do dynamic typing without concept types loaded. 
+					// concept properties are not parsed
+					// TODO: concept handling in two steps: first concept & concept_type, 
+					// then other properties
 					if (!_this.conceptsLookup) return true;
 					// parsing to number/boolean based on concept type
 					const concept = _this.conceptsLookup.get(headerName) || {};
 					return ["boolean", "measure"].includes(concept.concept_type);
 				},
-				complete: result => {
-					resource.response = result;
-					resource.data = result.data;
-					result.resource = resource;
-					resolve(result);
-				},
+				complete: result => resolve(result),
 				error: error => reject(error)
 			})
 		});
-		return resource.dataPromise;
 	},
 
 	buildResourcesLookup() {
@@ -457,6 +510,7 @@ let ddfcsvReader = {
 			if (!Array.isArray(resource.schema.primaryKey)) {
 				resource.schema.primaryKey = [resource.schema.primaryKey];
 			}
+			resource.translations = {};
 		});
 		this.resourcesLookup = new Map(this.datapackage.resources.map(
 			resource => [resource.name, resource]
