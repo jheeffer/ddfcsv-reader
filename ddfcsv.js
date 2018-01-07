@@ -65,7 +65,15 @@ let ddfcsvReader = {
 	},
 
 	performQuery(query) {
-		const { select, from="", where = {}, join = {}, order_by = [], language } = query;
+		const { 
+			select: { key=[], value=[] },
+			from  = "", 
+			where = {}, 
+			join  = {}, 
+			order_by = [], 
+			language 
+		} = query;
+		const select = { key, value }
 
 		// schema queries can be answered synchronously (after datapackage is loaded)
 		if (from.split(".")[1] == "schema") 
@@ -231,8 +239,6 @@ let ddfcsvReader = {
 	mergeObjects: (a,b) => Object.assign(a,b),
 
 	getJoinFilter(joinID, join) {
-		const values = this.getFilterFields(join.where).filter(field => field != join.key);
-
 		// assumption: join.key is same as field in where clause 
 		//  - where: { geo: $geo }, join: { "$geo": { key: geo, where: { ... }}}
 		//  - where: { year: $year }, join: { "$year": { key: year, where { ... }}}
@@ -242,7 +248,7 @@ let ddfcsvReader = {
 			return Promise.resolve({ [joinID]: join.where });
 		}	else {
 			// entity concept
-			return this.performQuery({ select: { key: [join.key], value: values }, where: join.where })
+			return this.performQuery({ select: { key: [join.key] }, where: join.where })
 				.then(result => ({ 
 					[joinID]: {
 						[join.key]: { 
