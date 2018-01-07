@@ -43,7 +43,8 @@
 				},
 				where: { 'is--country': true },
 				grouping: {},
-				orderBy: null
+				orderBy: null,
+				language: "zh-CN"
 			}
 		},
 		// bad - should be 4 records selected, but current records quantity is 296
@@ -147,7 +148,7 @@
 					time: { $gt: 1800, $lt: 2016 }
 				},
 				grouping: {},
-				orderBy: 'time'
+				orderBy: ['time']
 			}
 		},
 		{
@@ -239,7 +240,7 @@
 					join: {
 						$geo: { key: 'geo', where: { 'is--country': true } }
 					},
-					order_by: 'time'
+					order_by: ['time']
 				}
 		},
 		{
@@ -258,7 +259,7 @@
 						where: { 'is--country': true }
 					}
 				},
-				order_by: 'time'
+				order_by: ['time']
 			}
 		},
 		{
