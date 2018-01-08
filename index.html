@@ -2,11 +2,10 @@
 <script type="text/javascript" src="ddfcsv.js"></script>
 <script type="text/javascript">
 	const testTemplate = (ds, query) => new Promise((resolve) => {
-		const ddfcsv = Object.create(ddfcsvReader);
 
-		ddfcsv.loadDataset(`${ds}/datapackage.json`)
-			.then(() => {
-				ddfcsv.performQuery(query).then(result => {
+		ddfcsvReader(`${ds}/datapackage.json`)
+			.then(dataset => {
+				dataset.performQuery(query).then(result => {
 					console.log(query, result.length, result);
 					resolve(result);
 				});
