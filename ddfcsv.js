@@ -8,11 +8,9 @@ function ddfcsvReader(path) {
 		basePath,
 		datapackage;
 
-	return loadDataset(path).then(() => {
-		return {
-			performQuery
-		}
-	});
+	return loadDataset(path).then(() => ({
+		performQuery
+	}));
 
 	function loadDataset(path) {
 		datapackagePath = getDatapackagePath(path);
@@ -454,9 +452,13 @@ function ddfcsvReader(path) {
 	}
 
 	function joinData(key, joinMode, ...data) {
+		if (data.length == 1) return data[0];
+		const canonicalKey = key.slice(0).sort();
 		const dataMap = data.reduce((result, data) => {
 			data.forEach(row => {
-				const keyString = createKeyString(key, row);
+				const keyString = canonicalKey
+					.map(concept => row[concept])
+					.join(",");
 				if (result.has(keyString)) {
 					const resultRow = result.get(keyString);
 					joinRow(resultRow, row, joinMode);
