@@ -40,6 +40,15 @@ let ddfcsvReader = {
 	},
 
 	buildConceptsLookup() {
+
+		// start off with internal concepts
+		const internalConcepts = [
+			{ concept: "concept", concept_type: "string", domain: null },
+			{ concept: "concept_type", concept_type: "string", domain: null }
+		];
+		this.conceptsLookup = this.buildDataLookup(internalConcepts, "concept");
+
+		// query concepts
 		const conceptQuery = {
 			select: { key: ["concept"], value: ["concept_type", "domain"] }, 
 			from: "concepts" 
@@ -53,10 +62,35 @@ let ddfcsvReader = {
 					domain: null 
 				}))
 				.concat(result)
-				.concat({ concept: "concept", concept_type: "string", domain: null });
-			this.concepts = result;
-			this.conceptsLookup = this.buildDataLookup(this.concepts, "concept");
+				.concat(internalConcepts);
+			this.conceptsLookup = this.buildDataLookup(result, "concept");
+
+			// with conceptsLookup built, we can parse other concept properties
+			// according to their concept_type
+			return this.reparseResources(conceptQuery);
 		});
+	},
+
+	/**
+	 * Goes over resources for query and applies parsing according to concept_type
+	 * of headers. Impure function as it changes resources' data.
+	 * @param  {object} query Query to parse
+	 * @return {[type]}       [description]
+	 */
+	reparseResources(query) {
+		const resources = this.getResources(query.select.key, query.select.value);
+		const resourceUpdates = [...resources].map(resource => {
+			return resource.data.then(response => response.data.forEach(row => {
+				for(field of Object.keys(row)) {
+					const type = this.conceptsLookup.get(field).concept_type;
+					if (type == "boolean")
+						row[field] = row[field] == "true" || row[field] == "TRUE";
+					if (type == "measure")
+						row[field] = parseFloat(row[field]);
+				}
+			}));
+		});
+		return Promise.all(resourceUpdates);
 	},
 
 	// can only take single-dimensional data 
@@ -277,7 +311,7 @@ let ddfcsvReader = {
 	 * @param  {Array} concept_types    Array of concept types to filter out
 	 * @return {Array}                  Array of concept strings only of given types
 	 */
-	filterConceptsByType(conceptStrings = [...this.conceptsLookup.keys()], concept_types) {
+	filterConceptsByType(concept_types, conceptStrings = [...this.conceptsLookup.keys()]) {
 		return conceptStrings
 			.filter(conceptString => this.conceptsLookup && concept_types.includes(this.conceptsLookup.get(conceptString).concept_type))
 			.map(conceptString => this.conceptsLookup.get(conceptString));
@@ -290,8 +324,14 @@ let ddfcsvReader = {
 	 */
 	getEntityConceptRenameMap(queryKey, resourceKey) {
 		const resourceKeySet = new Set(resourceKey);
-		return this.filterConceptsByType(queryKey, ["entity_set", "entity_domain"])
-			.map(concept => this.concepts
+		const entityConceptTypes = ["entity_set", "entity_domain"];
+		const queryEntityConcepts = this.filterConceptsByType(entityConceptTypes, queryKey);
+		if (queryEntityConcepts.length == 0) return new Map();
+		
+		const allEntityConcepts = this.filterConceptsByType(entityConceptTypes);
+		
+		return queryEntityConcepts
+			.map(concept => allEntityConcepts
 				.filter(lookupConcept => {
 					if (concept.concept_type == "entity_set")
 						return resourceKeySet.has(lookupConcept.concept) && 
@@ -315,7 +355,7 @@ let ddfcsvReader = {
 	 * @return {Array}                Array of filter objects for each entity concept
 	 */
 	getEntityFilter(conceptStrings) {
-		const promises = this.filterConceptsByType(conceptStrings, ["entity_set"])
+		const promises = this.filterConceptsByType(["entity_set"], conceptStrings)
 			.map(concept => this.performQuery({ select: { key: [concept.domain], value: ["is--" + concept.concept] } })
 				.then(result => ({ [concept.concept]:
 						{ "$in": result
@@ -492,20 +532,19 @@ let ddfcsvReader = {
 	},
 
 	loadFile(filePath) {
-		const _this = this;
 		return new Promise((resolve, reject) => {
 			Papa.parse(filePath, {
 				download: true,
 				header: true,
 				skipEmptyLines: true,
-				dynamicTyping: function(headerName) {
+				dynamicTyping: (headerName) => {
 					// can't do dynamic typing without concept types loaded. 
-					// concept properties are not parsed
-					// TODO: concept handling in two steps: first concept & concept_type, 
-					// then other properties
-					if (!_this.conceptsLookup) return true;
+					// concept properties are not parsed in first concept query
+					// reparsing of concepts resource is done in conceptLookup building
+					if (!this.conceptsLookup) return true;
+
 					// parsing to number/boolean based on concept type
-					const concept = _this.conceptsLookup.get(headerName) || {};
+					const concept = this.conceptsLookup.get(headerName) || {};
 					return ["boolean", "measure"].includes(concept.concept_type);
 				},
 				complete: result => resolve(result),

@@ -24,6 +24,12 @@
           },
           {
             "name": "domain"
+          },
+          {
+            "name": "foo"
+          },
+          {
+            "name": "bar"
           }
         ],
         "primaryKey": "concept"
@@ -147,6 +153,15 @@
         "primaryKey": [
           "concept"
         ],
+        "value": "bar",
+        "resources": [
+          "ddf--concepts"
+        ]
+      },
+      {
+        "primaryKey": [
+          "concept"
+        ],
         "value": "concept_type",
         "resources": [
           "ddf--concepts"
@@ -157,6 +172,15 @@
           "concept"
         ],
         "value": "domain",
+        "resources": [
+          "ddf--concepts"
+        ]
+      },
+      {
+        "primaryKey": [
+          "concept"
+        ],
+        "value": "foo",
         "resources": [
           "ddf--concepts"
         ]
