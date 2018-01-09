@@ -8,6 +8,29 @@ function ddfcsvReader(path) {
 		basePath,
 		datapackage;
 
+	const parsingFunctions = new Map([
+		["boolean", (string) => string == "true" || string == "TRUE"],
+		["measure", (string) => parseFloat(string)]
+	]);
+
+	const operators = new Map([
+		/* logical operators */
+		["$and", (row, predicates) => predicates.every(p => applyFilterRow(row,p))],
+		["$or",  (row, predicates) => predicates.some(p => applyFilterRow(row,p))],
+		["$not", (row, predicates) => !applyFilterRow(row, predicate)],
+		["$nor", (row, predicates) => !predicates.some(p => applyFilterRow(row,p))],
+
+		/* equality operators */
+		["$eq",  (rowValue, filterValue) => rowValue == filterValue],
+		["$ne",  (rowValue, filterValue) => rowValue != filterValue],
+		["$gt",  (rowValue, filterValue) => rowValue > filterValue],
+		["$gte", (rowValue, filterValue) => rowValue >= filterValue],
+		["$lt",  (rowValue, filterValue) => rowValue < filterValue],
+		["$lte", (rowValue, filterValue) => rowValue <= filterValue],
+		["$in",  (rowValue, filterValue) => filterValue.has(rowValue)],
+		["$nin", (rowValue, filterValue) => !filterValue.has(rowValue)],
+	]);
+
 	return loadDataset(path).then(() => ({
 		performQuery
 	}));
@@ -86,17 +109,30 @@ function ddfcsvReader(path) {
 	 * @return {[type]}       [description]
 	 */
 	function reparseResources(query) {
-		const resources = getResources(query.select.key, query.select.value);
+		const projection = new Set(query.select.key.concat(query.select.value));
+		const filterFields = getFilterFields(query.where).filter(field => !projection.has(field));
+		const resources = getResources(query.select.key, query.select.value.concat(filterFields));
+
 		const resourceUpdates = [...resources].map(resource => {
-			return resource.data.then(response => response.data.forEach(row => {
-				for(field of Object.keys(row)) {
-					const type = conceptsLookup.get(field).concept_type;
-					if (type == "boolean")
-						row[field] = row[field] == "true" || row[field] == "TRUE";
-					if (type == "measure")
-						row[field] = parseFloat(row[field]);
-				}
-			}));
+			return resource.data.then(response => {
+
+				// first define find out which resource concepts need parsing
+				const resourceConcepts = Object.keys(response.data[0]);
+				const parsingConcepts = new Map();
+				resourceConcepts.forEach(concept => {
+					const type = conceptsLookup.get(concept).concept_type;
+					if (fn = parsingFunctions.get(type))
+						parsingConcepts.set(concept, fn);
+				});
+
+				// then parse only those concepts
+				return response.data.forEach(row => {
+					for([concept, parsefn] of parsingConcepts) {
+						row[concept] = parsefn(row[concept]);
+					}
+				});
+
+			});
 		});
 		return Promise.all(resourceUpdates);
 	}
@@ -130,13 +166,14 @@ function ddfcsvReader(path) {
 
 			const resourcesPromise    = loadResources(select.key, [...select.value, ...filterFields], language); // load all relevant resources
 			const joinsPromise        = getJoinFilters(join, query);    // list of entities selected from a join clause, later insterted in where clause
-			const entityFilterPromise = getEntityFilter(select.key);  // filter which ensures result only includes queried entity sets
+			const entitySetFilterPromise = getEntitySetFilter(select.key);  // filter which ensures result only includes queried entity sets
 
-			Promise.all([resourcesPromise, entityFilterPromise, joinsPromise])
-				.then(([resourceResponses, entityFilter, joinFilters]) => {
+			Promise.all([resourcesPromise, entitySetFilterPromise, joinsPromise])
+				.then(([resourceResponses, entitySetFilter, joinFilters]) => {
 
-					const whereResolved = resolveJoinsInWhere(where, joinFilters); // replace $join placeholders with { $in: [...] } operators
-					const filter = mergeFilters(entityFilter, whereResolved);
+					// create filter from where, join filters and entity set filters
+					const whereResolved = processWhere(where, joinFilters); 
+					const filter = mergeFilters(entitySetFilter, whereResolved);
 
 					const dataTables = resourceResponses
 						.map(response => processResourceResponse(response, select, filterFields)); // rename key-columns and remove irrelevant value-columns
@@ -184,26 +221,35 @@ function ddfcsvReader(path) {
 	}
 
 	/**
-	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator.
+	 * Replaces `$join` placeholders with relevant `{ "$in": [...] }` operator. 
+	 * Replaces $in- and $nin-arrays with sets for faster filtering
 	 * @param  {Object} where     Where clause possibly containing $join placeholders as field values. 
 	 * @param  {Object} joinFilters Collection of lists of entity or time values, coming from other tables defined in query `join` clause.
 	 * @return {Object}           Where clause with $join placeholders replaced by valid filter statements
 	 */
-	function resolveJoinsInWhere(where, joinFilters) {
+	function processWhere(where, joinFilters) {
 		const result = {};
 		for (field in where) {
 			var fieldValue = where[field];
-			// no support for deeper object structures (mongo style) { foo: { bar: "3", baz: true }}
-			if (["$and","$or","$nor"].includes(field))
-				result[field] = fieldValue.map(subFilter => resolveJoinsInWhere(subFilter, joinFilters));
-			else if (field == "$not")
-				result[field] = resolveJoinsInWhere(fieldValue, joinFilters);
+			if (["$and","$or","$nor"].includes(field)) {
+				result[field] = fieldValue.map(subFilter => processWhere(subFilter, joinFilters));
+			} 
+			else if (field == "$in" || field == "$nin") {
+				// prepare "$in" fields for optimized lookup
+				result[field] = new Set(fieldValue);
+			} 
 			else if (typeof joinFilters[fieldValue] != "undefined") {
+				// found a join!
 				// not assigning to result[field] because joinFilter can contain $and/$or statements in case of time concept (join-where is directly copied, not executed)
 				// otherwise could end up with where: { year: { $and: [{ ... }]}}, which is invalid (no boolean ops inside field objects)
 				// in case of entity join, joinFilters contains correct field
 				Object.assign(result, joinFilters[fieldValue]);
+			} 
+			else if (typeof fieldValue == "object") {
+				// catches $not and fields with equality operators
+				result[field] = processWhere(fieldValue, joinFilters);
 			} else {
+				// catches rest, being all equality operators except for $in and $nin
 				result[field] = fieldValue;
 			}
 		};
@@ -238,40 +284,20 @@ function ddfcsvReader(path) {
 		return row;
 	}
 
-	function getOperator(op) {
-		const ops = {
-			/* logical operators */
-			$and: (row, predicates) => predicates.map(p => applyFilterRow(row,p)).reduce((a,b) => a && b),
-			$or:  (row, predicates) => predicates.map(p => applyFilterRow(row,p)).reduce((a,b) => a || b),
-			$not: (row, predicates) => !applyFilterRow(row, predicate),
-			$nor: (row, predicates) => !predicates.map(p => applyFilterRow(row,p)).reduce((a,b) => a || b),
-
-			/* equality operators */
-			$eq:  (rowValue, filterValue) => rowValue == filterValue,
-			$ne:  (rowValue, filterValue) => rowValue != filterValue,
-			$gt:  (rowValue, filterValue) => rowValue > filterValue,
-			$gte: (rowValue, filterValue) => rowValue >= filterValue,
-			$lt:  (rowValue, filterValue) => rowValue < filterValue,
-			$lte: (rowValue, filterValue) => rowValue <= filterValue,
-			$in:  (rowValue, filterValue) => filterValue.includes(rowValue),
-			$nin: (rowValue, filterValue) => !filterValue.includes(rowValue)
-		}
-		return ops[op] || null;
-	}
-
 	function applyFilterRow(row, filter) {
-		return Object.keys(filter).reduce((result, filterKey) => {
-			if (operator = getOperator(filterKey)) {
-				// apply operator
-				return result && operator(row, filter[filterKey]);
+		// implicit $and in filter object handled by .every()
+		return Object.keys(filter).every(filterKey => {
+			if (operator = operators.get(filterKey)) {
+				return operator(row, filter[filterKey]);
 			} else if(typeof filter[filterKey] != "object") { // assuming values are primitives not Number/Boolean/String objects
 				// { <field>: <value> } is shorthand for { <field>: { $eq: <value> }} 
-				return result && getOperator("$eq")(row[filterKey], filter[filterKey]);
+				return operators.get("$eq")(row[filterKey], filter[filterKey]);
 			} else {
-				// go one step deeper - doesn't happen yet with DDFQL queries as fields have no depth
-				return result && applyFilterRow(row[filterKey], filter[filterKey]);
+				// filter[filterKey] is an object and will thus contain 
+				// an equality operator (no deep objects (like in Mongo) supported)
+				return applyFilterRow(row[filterKey], filter[filterKey]);
 			}
-		}, true);
+		});
 	}
 
 	function getJoinFilters(join) {
@@ -295,7 +321,7 @@ function ddfcsvReader(path) {
 				.then(result => ({ 
 					[joinID]: {
 						[join.key]: { 
-							"$in": result.map(row => row[join.key]) 
+							"$in": new Set(result.map(row => row[join.key])) 
 						} 
 					}
 				}));
@@ -363,13 +389,15 @@ function ddfcsvReader(path) {
 	 * @param  {Array} conceptStrings Array of concept strings for which entities should be found
 	 * @return {Array}                Array of filter objects for each entity concept
 	 */
-	function getEntityFilter(conceptStrings) {
+	function getEntitySetFilter(conceptStrings) {
 		const promises = filterConceptsByType(["entity_set"], conceptStrings)
 			.map(concept => performQuery({ select: { key: [concept.domain], value: ["is--" + concept.concept] } })
 				.then(result => ({ [concept.concept]:
-						{ "$in": result
-							.filter(row => row["is--" + concept.concept])
-							.map(row => row[concept.domain])
+						{ "$in": new Set(
+								result
+									.filter(row => row["is--" + concept.concept])
+									.map(row => row[concept.domain])
+							)
 						}
 				}))
 			);
@@ -489,8 +517,8 @@ function ddfcsvReader(path) {
 			case "overwriteWithError":
 				/* Alternative for "overwrite" with JOIN error detection */
 				for (concept in sourceRow) {
-					if (resultRow[concept] && resultRow[concept] != sourceRow[concept]) {
-						throwError("JOIN Error: two resources have different data for key-value pair " + key + "," + concept + ".");
+					if (resultRow[concept] !== undefined && resultRow[concept] !== sourceRow[concept]) {
+						throwError("JOIN Error: two resources have different data for `" + concept + "`: " + JSON.stringify(sourceRow) + "," + JSON.stringify(resultRow) + ".");
 					} else {
 						resultRow[concept] = sourceRow[concept];
 					}
