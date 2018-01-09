@@ -1,17 +1,9 @@
 function ddfcsvReader(path) {
 
-	let 
-		keyValueLookup,
-		resourcesLookup,
-		conceptsLookup,
-		datapackagePath,
-		basePath,
-		datapackage;
-
-	const parsingFunctions = new Map([
-		["boolean", (string) => string == "true" || string == "TRUE"],
-		["measure", (string) => parseFloat(string)]
-	]);
+	const internalConcepts = [
+		{ concept: "concept", concept_type: "string", domain: null },
+		{ concept: "concept_type", concept_type: "string", domain: null }
+	];
 
 	const operators = new Map([
 		/* logical operators */
@@ -31,14 +23,22 @@ function ddfcsvReader(path) {
 		["$nin", (rowValue, filterValue) => !filterValue.has(rowValue)],
 	]);
 
-	return loadDataset(path).then(() => ({
-		performQuery
-	}));
+	const 
+		datapackagePath    = getDatapackagePath(path),
+		basePath           = getBasePath(datapackagePath),
+		datapackagePromise = loadDataPackage(datapackagePath),
+		conceptsPromise    = datapackagePromise.then(loadConcepts);
 
-	function loadDataset(path) {
-		datapackagePath = getDatapackagePath(path);
-		basePath = getBasePath(datapackagePath);
-		return readDataPackage(datapackagePath);
+	const
+		keyValueLookup  = new Map(),
+		resourcesLookup = new Map(),
+		conceptsLookup  = new Map();
+
+	let
+		datapackage;
+
+	return {
+		query
 	}
 
 	function getDatapackagePath(path) {	
@@ -52,71 +52,77 @@ function ddfcsvReader(path) {
 	}
 
 	function getBasePath(datapackagePath) {
-		dpPathSplit = datapackagePath.split("/");
+		const dpPathSplit = datapackagePath.split("/");
 		dpPathSplit.pop();
 		return dpPathSplit.join("/") + "/";
 	}
 
-	function readDataPackage(path) {
+	function loadDataPackage(path) {
 		return fetch(path)
 			.then(response => response.json())
-			.then(handleNewDatapackage);
+			.then(dp => {
+				datapackage = dp;
+				buildResourcesLookup(datapackage);
+				buildKeyValueLookup(datapackage);
+				return datapackage;
+			});
 	}
 
-	function handleNewDatapackage(dpJson) {
-		datapackage = dpJson;
-		buildResourcesLookup();
-		buildKeyValueLookup();
-		return buildConceptsLookup().then(() => dpJson);
-	}
-
-	function buildConceptsLookup() {
-
+	function loadConcepts() {
 		// start off with internal concepts
-		const internalConcepts = [
-			{ concept: "concept", concept_type: "string", domain: null },
-			{ concept: "concept_type", concept_type: "string", domain: null }
-		];
-		conceptsLookup = buildDataLookup(internalConcepts, "concept");
+		setConceptsLookup(internalConcepts, "concept");
 
 		// query concepts
 		const conceptQuery = {
 			select: { key: ["concept"], value: ["concept_type", "domain"] }, 
 			from: "concepts" 
 		};
-		return performQuery(conceptQuery).then(result => {
-			result = result
-				.filter(concept => concept.concept_type == "entity_set")
-				.map(concept => ({ 
-					concept: "is--" + concept.concept, 
-					concept_type: "boolean", 
-					domain: null 
-				}))
-				.concat(result)
-				.concat(internalConcepts);
-			conceptsLookup = buildDataLookup(result, "concept");
-
+		// not using query() to circumvent the conceptPromise resolving
+		return queryData(conceptQuery)
+			.then(buildConceptsLookup)
 			// with conceptsLookup built, we can parse other concept properties
 			// according to their concept_type
-			return reparseResources(conceptQuery);
-		});
+			.then(reparseConcepts);
+	}
+
+	function buildConceptsLookup(concepts) {
+
+		const entitySetMembershipConcepts = concepts
+			.filter(concept => concept.concept_type == "entity_set")
+			.map(concept => ({ 
+				concept: "is--" + concept.concept, 
+				concept_type: "boolean", 
+				domain: null 
+			}));
+
+		concepts = concepts
+			.concat(entitySetMembershipConcepts)
+			.concat(internalConcepts);
+
+		setConceptsLookup(concepts, "concept");
+		return conceptsLookup;
 	}
 
 	/**
-	 * Goes over resources for query and applies parsing according to concept_type
-	 * of headers. Impure function as it changes resources' data.
+	 * Iterates resources for query and applies parsing according to concept_type
+	 * of headers. Does not take into account join clause.
+	 * Impure function as it parses data in-place.
 	 * @param  {object} query Query to parse
 	 * @return {[type]}       [description]
 	 */
-	function reparseResources(query) {
-		const projection = new Set(query.select.key.concat(query.select.value));
-		const filterFields = getFilterFields(query.where).filter(field => !projection.has(field));
-		const resources = getResources(query.select.key, query.select.value.concat(filterFields));
+	function reparseConcepts(query) {
+
+		const parsingFunctions = new Map([
+			["boolean", (string) => string == "true" || string == "TRUE"],
+			["measure", (string) => parseFloat(string)]
+		]);
+		
+		const resources = getResources(["concept"]);
 
 		const resourceUpdates = [...resources].map(resource => {
 			return resource.data.then(response => {
 
-				// first define find out which resource concepts need parsing
+				// first find out which resource concepts need parsing
 				const resourceConcepts = Object.keys(response.data[0]);
 				const parsingConcepts = new Map();
 				resourceConcepts.forEach(concept => {
@@ -137,13 +143,25 @@ function ddfcsvReader(path) {
 		return Promise.all(resourceUpdates);
 	}
 
-	// can only take single-dimensional data 
-	function buildDataLookup(data, key) {
-		return new Map(data.map(row => [row[key], row]));
+	// can only take single-dimensional key 
+	function setConceptsLookup(concepts) {
+		conceptsLookup.clear();
+		concepts.forEach(row => conceptsLookup.set(row["concept"], row));
 	}
 
-	function performQuery(query) {
-		//console.log("Incoming query: ", query);
+	function query(query) {
+		if (isSchemaQuery(query)) {
+			return datapackagePromise.then(() => querySchema(query));
+		} else {
+			return conceptsPromise.then(() => queryData(query)); 
+		}
+	}
+
+	function isSchemaQuery({ from = "" } = query) { 
+		return from.split(".")[1] == "schema";
+	}
+
+	function queryData(query) {
 		const { 
 			select: { key=[], value=[] },
 			from  = "", 
@@ -154,41 +172,33 @@ function ddfcsvReader(path) {
 		} = query;
 		const select = { key, value }
 
-		// schema queries can be answered synchronously (after datapackage is loaded)
-		if (from.split(".")[1] == "schema") 
-			return Promise.resolve(getSchemaResponse(query))
+		const projection   = new Set(select.key.concat(select.value));
+		const filterFields = getFilterFields(where).filter(field => !projection.has(field));
 
-		// other queries are async
-		return new Promise((resolve, reject) => {
+		const resourcesPromise       = loadResources(select.key, [...select.value, ...filterFields], language); // load all relevant resources
+		const joinsPromise           = getJoinFilters(join, query);    // list of entities selected from a join clause, later insterted in where clause
+		const entitySetFilterPromise = getEntitySetFilter(select.key);  // filter which ensures result only includes queried entity sets
 
-			const projection = new Set(select.key.concat(select.value));
-			const filterFields = getFilterFields(where).filter(field => !projection.has(field));
+		return Promise.all([resourcesPromise, entitySetFilterPromise, joinsPromise])
+			.then(([resourceResponses, entitySetFilter, joinFilters]) => {
 
-			const resourcesPromise    = loadResources(select.key, [...select.value, ...filterFields], language); // load all relevant resources
-			const joinsPromise        = getJoinFilters(join, query);    // list of entities selected from a join clause, later insterted in where clause
-			const entitySetFilterPromise = getEntitySetFilter(select.key);  // filter which ensures result only includes queried entity sets
+				// create filter from where, join filters and entity set filters
+				const whereResolved = processWhere(where, joinFilters); 
+				const filter = mergeFilters(entitySetFilter, whereResolved);
 
-			Promise.all([resourcesPromise, entitySetFilterPromise, joinsPromise])
-				.then(([resourceResponses, entitySetFilter, joinFilters]) => {
+				const dataTables = resourceResponses
+					.map(response => processResourceResponse(response, select, filterFields)); // rename key-columns and remove irrelevant value-columns
+				
+				const queryResult = joinData(select.key, "overwrite", ...dataTables)  // join (reduce) data to one data table
+					.filter(row => applyFilterRow(row, filter))     // apply filters (entity sets and where (including join))
+					.map(row => fillMissingValues(row, projection)) // fill any missing values with null values
+					.map(row => projectRow(row, projection));       // remove fields used only for filtering 
 
-					// create filter from where, join filters and entity set filters
-					const whereResolved = processWhere(where, joinFilters); 
-					const filter = mergeFilters(entitySetFilter, whereResolved);
+				orderData(queryResult, order_by);
 
-					const dataTables = resourceResponses
-						.map(response => processResourceResponse(response, select, filterFields)); // rename key-columns and remove irrelevant value-columns
-					
-					const queryResult = joinData(select.key, "overwrite", ...dataTables)  // join (reduce) data to one data table
-						.filter(row => applyFilterRow(row, filter))     // apply filters (entity sets and where (including join))
-						.map(row => fillMissingValues(row, projection)) // fill any missing values with null values
-						.map(row => projectRow(row, projection));       // remove fields used only for filtering 
+				return queryResult;
 
-					orderData(queryResult, order_by);
-
-					resolve(queryResult);
-
-				});       
-		});
+			}); 	
 	}
 
 	function orderData(data, order_by = []) {
@@ -208,7 +218,7 @@ function ddfcsvReader(path) {
 		// sort by one or more fields
 		const n = orderNormalized.length;
 		data.sort((a,b) => {
-			for (let i = 0; i < n; i++) {
+			for (var i = 0; i < n; i++) {
 				const order = orderNormalized[i];
 				if (a[order.concept] < b[order.concept])
 					return -1 * order.direction;
@@ -246,10 +256,12 @@ function ddfcsvReader(path) {
 				Object.assign(result, joinFilters[fieldValue]);
 			} 
 			else if (typeof fieldValue == "object") {
-				// catches $not and fields with equality operators
+				// catches $not and fields with equality operator-objects
+				// { <field>: { "$lt": 1500 }}
 				result[field] = processWhere(fieldValue, joinFilters);
 			} else {
 				// catches rest, being all equality operators except for $in and $nin
+				// { "$lt": 1500 }
 				result[field] = fieldValue;
 			}
 		};
@@ -264,8 +276,14 @@ function ddfcsvReader(path) {
 	}
 
 	function getSchemaResponse(query) {
+		
+		const getSchemaFromCollection = collection => {
+			datapackage.ddfSchema[collection].map(
+				{ primaryKey, value } => ({ key: primaryKey, value })
+			)
+		};
+
 		const collection = query.from.split('.')[0];
-		const getSchemaFromCollection = collection => datapackage.ddfSchema[collection].map(kvPair => ({ key: kvPair.primaryKey, value: kvPair.value }))
 		if (datapackage.ddfSchema[collection]) {
 			return getSchemaFromCollection(collection);
 		} else if (collection == "*") {
@@ -317,7 +335,7 @@ function ddfcsvReader(path) {
 			return Promise.resolve({ [joinID]: join.where });
 		}	else {
 			// entity concept
-			return performQuery({ select: { key: [join.key] }, where: join.where })
+			return query({ select: { key: [join.key] }, where: join.where })
 				.then(result => ({ 
 					[joinID]: {
 						[join.key]: { 
@@ -346,10 +364,15 @@ function ddfcsvReader(path) {
 	 * @param  {Array} concept_types    Array of concept types to filter out
 	 * @return {Array}                  Array of concept strings only of given types
 	 */
-	function filterConceptsByType(concept_types, conceptStrings = [...conceptsLookup.keys()]) {
-		return conceptStrings
-			.filter(conceptString => conceptsLookup && concept_types.includes(conceptsLookup.get(conceptString).concept_type))
-			.map(conceptString => conceptsLookup.get(conceptString));
+	function filterConceptsByType(concept_types, conceptStrings = conceptsLookup.keys()) {
+		const concepts = [];
+		for (conceptString of conceptStrings) {
+			const concept = conceptsLookup.get(conceptString);
+			if (concept_types.includes(concept.concept_type)) {
+				concepts.push(concept);
+			}
+		};
+		return concepts;
 	}
 
 	/**
@@ -391,7 +414,7 @@ function ddfcsvReader(path) {
 	 */
 	function getEntitySetFilter(conceptStrings) {
 		const promises = filterConceptsByType(["entity_set"], conceptStrings)
-			.map(concept => performQuery({ select: { key: [concept.domain], value: ["is--" + concept.concept] } })
+			.map(concept => query({ select: { key: [concept.domain], value: ["is--" + concept.concept] } })
 				.then(result => ({ [concept.concept]:
 						{ "$in": new Set(
 								result
@@ -596,23 +619,20 @@ function ddfcsvReader(path) {
 		});
 	}
 
-	function buildResourcesLookup() {
-		if (resourcesLookup) return resourcesLookup;
+	function buildResourcesLookup(datapackage) {
+		if (resourcesLookup.size > 0) return resourcesLookup;
 		datapackage.resources.forEach(resource => { 
 			if (!Array.isArray(resource.schema.primaryKey)) {
 				resource.schema.primaryKey = [resource.schema.primaryKey];
 			}
 			resource.translations = {};
+			resourcesLookup.set(resource.name, resource);
 		});
-		resourcesLookup = new Map(datapackage.resources.map(
-			resource => [resource.name, resource]
-		));
 		return resourcesLookup;
 	}
 
-	function buildKeyValueLookup() {
-		if (keyValueLookup) return keyValueLookup;
-		keyValueLookup = new Map();
+	function buildKeyValueLookup(datapackage) {
+		if (keyValueLookup.size > 0) return keyValueLookup;
 		for (let collection in datapackage.ddfSchema) {
 			datapackage.ddfSchema[collection].map(kvPair => {
 				const key = createKeyString(kvPair.primaryKey);
