@@ -204,10 +204,10 @@ function ddfcsvReader(path) {
 	function orderData(data, order_by = []) {
 		if (order_by.length == 0) return;
 
-		// process ["geo"] or [{"geo": "asc"}] to [{ concept: "geo", order: 1 }];
+		// process ["geo"] or [{"geo": "asc"}] to [{ concept: "geo", direction: 1 }];
 		const orderNormalized = order_by.map(orderPart => {
 			if (typeof orderPart == "string") {
-				return { concept: orderPart, order: 1 };
+				return { concept: orderPart, direction: 1 };
 			}	else {
 				const concept   = Object.keys(orderPart)[0];
 				const direction = (orderPart[concept] == "asc" ? 1 : -1);
