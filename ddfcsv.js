@@ -9,7 +9,7 @@ function ddfcsvReader(path) {
 		/* logical operators */
 		["$and", (row, predicates) => predicates.every(p => applyFilterRow(row,p))],
 		["$or",  (row, predicates) => predicates.some(p => applyFilterRow(row,p))],
-		["$not", (row, predicates) => !applyFilterRow(row, predicate)],
+		["$not", (row, predicate) => !applyFilterRow(row, predicate)],
 		["$nor", (row, predicates) => !predicates.some(p => applyFilterRow(row,p))],
 
 		/* equality operators */
@@ -176,7 +176,7 @@ function ddfcsvReader(path) {
 		const filterFields = getFilterFields(where).filter(field => !projection.has(field));
 
 		const resourcesPromise       = loadResources(select.key, [...select.value, ...filterFields], language); // load all relevant resources
-		const joinsPromise           = getJoinFilters(join, query);    // list of entities selected from a join clause, later insterted in where clause
+		const joinsPromise           = getJoinFilters(join);    // list of entities selected from a join clause, later insterted in where clause
 		const entitySetFilterPromise = getEntitySetFilter(select.key);  // filter which ensures result only includes queried entity sets
 
 		return Promise.all([resourcesPromise, entitySetFilterPromise, joinsPromise])
@@ -275,11 +275,11 @@ function ddfcsvReader(path) {
 		}, { "$and": [] });
 	}
 
-	function getSchemaResponse(query) {
+	function querySchema(query) {
 		
 		const getSchemaFromCollection = collection => {
 			datapackage.ddfSchema[collection].map(
-				{ primaryKey, value } => ({ key: primaryKey, value })
+				({ primaryKey, value }) => ({ key: primaryKey, value })
 			)
 		};
 
@@ -478,7 +478,7 @@ function ddfcsvReader(path) {
 	}
 
 	function loadResources(key, value, language) {
-		const resources = getResources(key, value, language);
+		const resources = getResources(key, value);
 		return Promise.all([...resources].map(
 			resource => loadResource(resource, language)
 		));
