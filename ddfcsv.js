@@ -278,7 +278,7 @@ function ddfcsvReader(path) {
 	function querySchema(query) {
 		
 		const getSchemaFromCollection = collection => {
-			datapackage.ddfSchema[collection].map(
+			return datapackage.ddfSchema[collection].map(
 				({ primaryKey, value }) => ({ key: primaryKey, value })
 			)
 		};
